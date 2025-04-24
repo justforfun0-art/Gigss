@@ -1,0 +1,59 @@
+package com.example.gigs.navigation
+
+sealed class Screen(open val route: String) {
+    object Welcome : Screen("welcome")
+    object PhoneAuth : Screen("phone_auth")
+    object OtpVerification : Screen("otp_verification")
+    object SelectUserType : Screen("select_user_type")
+    object CreateEmployeeProfile : Screen("create_employee_profile")
+    object EmployeeProfileDetails : Screen("employee_profile_details")
+    object CreateEmployerProfile : Screen("create_employer_profile")
+    object EmployerProfileDetails : Screen("employer_profile_details")
+    object EmployeeHome : Screen("employee_home")
+    object EmployerHome : Screen("employer_home")
+
+    // Note: You have both UserTypeSelection and SelectUserType - they appear to be duplicates
+    // Consider removing one of them
+    object UserTypeSelection : Screen("user_type_selection")
+    object BasicProfileSetup : Screen("basic_profile_setup")
+    object EmployeeProfileSetup : Screen("employee_profile_setup")
+    object EmployerProfileSetup : Screen("employer_profile_setup")
+
+    // New screens for added features
+    object JobListing : Screen("job_listing/{district}") {
+        fun createRoute(district: String): String = "job_listing/$district"
+    }
+    object JobDetails : Screen("job_details/{jobId}") {
+        fun createRoute(jobId: String): String = "job_details/$jobId"
+    }
+    object CreateJob : Screen("create_job")
+    object Conversations : Screen("conversations")
+    object Chat : Screen("chat/{conversationId}/{otherUserName}/{receiverId}") {
+        fun createRoute(conversationId: String, otherUserName: String, receiverId: String): String =
+            "chat/$conversationId/$otherUserName/$receiverId"
+    }
+    object Notifications : Screen("notifications")
+    object Reviews : Screen("reviews/{jobId}") {
+        fun createRoute(jobId: String? = null): String =
+            jobId?.let { "reviews/$it" } ?: "reviews/null"
+    }
+    object CreateReview : Screen("create_review/{jobId}/{revieweeId}/{revieweeName}") {
+        fun createRoute(jobId: String, revieweeId: String, revieweeName: String): String =
+            "create_review/$jobId/$revieweeId/$revieweeName"
+    }
+    object EmployeeDashboard : Screen("employee_dashboard")
+    object EmployerDashboard : Screen("employer_dashboard")
+
+    // Admin screens
+    object AdminJobApproval : Screen("admin_job_approval")
+    object AdminDashboard : Screen("admin_dashboard")
+
+    // Helper functions for parameterized routes
+    fun createRoute(vararg params: String): String {
+        var route = this.route
+        params.forEach {
+            route = route.replaceFirst("{}", it)
+        }
+        return route
+    }
+}
