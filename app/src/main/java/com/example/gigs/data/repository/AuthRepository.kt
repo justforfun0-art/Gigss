@@ -175,5 +175,30 @@ class AuthRepository @Inject constructor(
         }
     }
 
+    suspend fun checkExistingUserType(phoneNumber: String, requestedType: UserType): Result<Boolean> {
+        return try {
+            val userId = getCurrentUserId() ?: return Result.failure(Exception("User not authenticated"))
+
+            // Get the user from Supabase database
+            val user = getUserById(userId)
+
+            // If user doesn't exist, they can register as any type
+            if (user == null) {
+                return Result.success(true)
+            }
+
+            // If user already has a type and it's different from requested type, return false
+            if (user.userType != UserType.UNDEFINED && user.userType != requestedType) {
+                return Result.failure(Exception("You are already registered as a ${user.userType.toString().lowercase()}. You cannot register as a ${requestedType.toString().lowercase()}. Please contact admin@thegigwork.com for assistance."))
+            }
+
+            // User can register as the requested type
+            return Result.success(true)
+
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+    }
+
 
 }

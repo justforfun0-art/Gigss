@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.gigs.data.model.AuthState
 import com.example.gigs.data.model.OtpState
+import com.example.gigs.data.model.UserType
 import com.example.gigs.data.repository.AuthRepository
 import com.example.gigs.data.repository.ProfileRepository
 import com.google.android.play.core.integrity.e
@@ -120,13 +121,35 @@ class AuthViewModel @Inject constructor(
     }
 
     fun signOut() {
+        // Set auth state to Unauthenticated FIRST
+        _authState.value = AuthState.Unauthenticated
+
+        // Then perform the repository sign out
         viewModelScope.launch {
             authRepository.signOut()
-            _authState.value = AuthState.Unauthenticated
         }
     }
 
     fun resetOtpState() {
         _otpState.value = OtpState.Initial
     }
+    /**
+     * Check if the user can register/login as the requested user type
+     * If they're already registered as a different type, they will be
+     * restricted and logged out
+     */
+    suspend fun checkUserType(requestedType: UserType): Result<Boolean> {
+        val userId = getCurrentUserId() ?: return Result.failure(Exception("User not authenticated"))
+
+        // Check if user can register as the requested type
+        val result = authRepository.checkExistingUserType("", requestedType)
+
+        if (result.isFailure) {
+            // User has a role mismatch - log them out
+            signOut()
+        }
+
+        return result
+    }
+
 }

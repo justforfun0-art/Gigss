@@ -11,8 +11,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavController
 import com.example.gigs.data.model.Job
+import com.example.gigs.navigation.Screen
 import com.example.gigs.ui.components.GigWorkPrimaryButton
+import com.example.gigs.viewmodel.ChatViewModel
 import com.example.gigs.viewmodel.JobViewModel
 import java.text.NumberFormat
 import java.util.*
@@ -22,6 +26,7 @@ import java.util.*
 fun JobDetailsScreen(
     jobViewModel: JobViewModel,
     jobId: String,
+    navController: NavController,
     onBackPressed: () -> Unit,
     onApply: () -> Unit,
     onMessageEmployer: (employerId: String, employerName: String) -> Unit
@@ -336,31 +341,84 @@ fun JobDetailsScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Message employer button
-                OutlinedButton(
-                    onClick = {
-                        job?.employerId?.let { employerId ->
-                            onMessageEmployer(
-                                employerId,
-                                employerProfile?.companyName ?: "Employer"
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Email,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp)
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Text("Message Employer")
-                }
-
+                  MessageEmployerButton(
+                    jobId = jobId,
+                    employerId = job?.employerId ?: "",
+                    viewModel = hiltViewModel(),
+                    navController = navController
+                )
                 Spacer(modifier = Modifier.height(32.dp))
+
+
+                /*
+                                // Message employer button
+                                OutlinedButton(
+                                    onClick = {
+                                        job?.employerId?.let { employerId ->
+                                            onMessageEmployer(
+                                                employerId,
+                                                employerProfile?.companyName ?: "Employer"
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Email,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    Text("Message Employer")
+                                }
+
+                                Spacer(modifier = Modifier.height(32.dp))
+
+                                 */
             }
         }
+
+
+
+        }
+}
+
+// Add this to JobDetailsScreen.kt
+@Composable
+fun MessageEmployerButton(
+    jobId: String,
+    employerId: String,
+    viewModel: ChatViewModel = hiltViewModel(),
+    navController: NavController
+) {
+    val currentUserId = viewModel.currentUserId.collectAsState().value ?: return
+
+    OutlinedButton(
+        onClick = {
+            viewModel.createNewConversation(
+                jobId = jobId,
+                employerId = employerId,
+                employeeId = currentUserId
+            ) { conversationId ->
+                // Navigate to the conversation
+                navController.navigate(
+                    Screen.Chat.createRoute(
+                    conversationId = conversationId,
+                    otherUserName = "Employer", // You might want to fetch the real name
+                    receiverId = employerId
+                ))
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(
+            imageVector = Icons.Default.Message,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Message Employer")
     }
 }

@@ -43,7 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.gigs.data.model.Review
 import com.example.gigs.ui.components.GigWorkPrimaryButton
-import com.example.gigs.ui.screens.dashboard.formatDate
+import com.example.gigs.utils.DateUtils.formatDate
 import com.example.gigs.viewmodel.ReviewState
 import com.example.gigs.viewmodel.ReviewViewModel
 

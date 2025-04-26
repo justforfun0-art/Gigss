@@ -1,35 +1,13 @@
 package com.example.gigs.ui.screens.notifications
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Update
-import androidx.compose.material.icons.filled.WorkOutline
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -37,25 +15,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavController
 import com.example.gigs.data.model.Notification
-import com.example.gigs.ui.screens.dashboard.formatTimeAgo
-import androidx.compose.material3.Divider
-import androidx.compose.material3.IconButton
+import com.example.gigs.navigation.Screen
+import com.example.gigs.utils.DateUtils.formatTimeAgo
 import com.example.gigs.viewmodel.NotificationViewModel
-import io.ktor.websocket.Frame
-import androidx.compose.material3.Icon
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificationsScreen(
     viewModel: NotificationViewModel = hiltViewModel(),
-    onNotificationClick: (Notification) -> Unit,
+    navController: NavController,
     onBackPressed: () -> Unit
 ) {
     val notifications by viewModel.notifications.collectAsState()
@@ -68,7 +42,7 @@ fun NotificationsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Notifications") },  // Changed Frame.Text to Text
+                title = { Text("Notifications") },
                 navigationIcon = {
                     IconButton(onClick = onBackPressed) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
@@ -77,7 +51,7 @@ fun NotificationsScreen(
                 actions = {
                     if (notifications.any { !it.isRead }) {
                         TextButton(onClick = { viewModel.markAllAsRead() }) {
-                            Text("Mark all as read")  // Changed Frame.Text to Text
+                            Text("Mark all as read")
                         }
                     }
                 }
@@ -116,14 +90,44 @@ fun NotificationsScreen(
                 LazyColumn(
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(notifications) { notification ->  // Using items with collection
+                    items(notifications) { notification ->
                         NotificationItem(
                             notification = notification,
                             onClick = {
+                                // Mark as read
                                 if (!notification.isRead) {
                                     viewModel.markAsRead(notification.id)
                                 }
-                                onNotificationClick(notification)
+
+                                // Navigate based on notification type
+                                when (notification.type) {
+                                    "job_approval", "job_rejection" -> {
+                                        notification.relatedId?.let { jobId ->
+                                            navController.navigate("job_details/$jobId")
+                                        }
+                                    }
+                                    "new_application" -> {
+                                        notification.relatedId?.let { applicationId ->
+                                            navController.navigate(Screen.EmployerDashboard.route)
+                                        }
+                                    }
+                                    "application_update" -> {
+                                        notification.relatedId?.let { applicationId ->
+                                            navController.navigate("application_details/$applicationId")
+                                        }
+                                    }
+                                    "new_message" -> {
+                                        notification.relatedId?.let { conversationId ->
+                                            navController.navigate("chat/$conversationId")
+                                        }
+                                    }
+                                    "job_match" -> {
+                                        notification.relatedId?.let { jobId ->
+                                            navController.navigate("job_details/$jobId")
+                                        }
+                                    }
+                                    // Add other notification types as needed
+                                }
                             }
                         )
                         Divider()
@@ -134,75 +138,84 @@ fun NotificationsScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificationItem(
     notification: Notification,
     onClick: () -> Unit
 ) {
-    Row(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(16.dp)
-            .background(
-                if (!notification.isRead) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
-                else Color.Transparent
-            ),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (!notification.isRead)
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            else
+                MaterialTheme.colorScheme.surface
+        ),
+        onClick = onClick
     ) {
-        // Icon based on notification type
-        val icon = when (notification.type) {
-            "new_application" -> Icons.Default.WorkOutline
-            "application_update" -> Icons.Default.Update
-            "new_message" -> Icons.Default.Email
-            "job_match" -> Icons.Default.Search
-            else -> Icons.Default.Notifications
-        }
-
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(24.dp)
-        )
-
-        Spacer(modifier = Modifier.width(16.dp))
-
-        Column(
-            modifier = Modifier.weight(1f)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = notification.title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = if (!notification.isRead) FontWeight.Bold else FontWeight.Normal
+            // Icon based on notification type
+            val icon = when (notification.type) {
+                "new_application" -> Icons.Default.WorkOutline
+                "application_update" -> Icons.Default.Update
+                "new_message" -> Icons.Default.Email
+                "job_match" -> Icons.Default.Search
+                else -> Icons.Default.Notifications
+            }
+
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp)
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.width(16.dp))
 
-            Text(
-                text = notification.message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            if (notification.createdAt != null) {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
                 Text(
-                    text = formatTimeAgo(notification.createdAt),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    text = notification.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = if (!notification.isRead) FontWeight.Bold else FontWeight.Normal
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = notification.message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                if (notification.createdAt != null) {
+                    Text(
+                        text = formatTimeAgo(notification.createdAt),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+            }
+
+            if (!notification.isRead) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
                 )
             }
-        }
-
-        if (!notification.isRead) {
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-            )
         }
     }
 }

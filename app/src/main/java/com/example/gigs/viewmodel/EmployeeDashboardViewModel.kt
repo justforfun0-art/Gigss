@@ -131,3 +131,87 @@ class EmployerDashboardViewModel @Inject constructor(
         }
     }
 }
+
+@HiltViewModel
+class EmployerApplicationsViewModel @Inject constructor(
+    private val applicationRepository: ApplicationRepository,
+    private val jobRepository: JobRepository
+) : ViewModel() {
+    private val _recentApplications = MutableStateFlow<List<ApplicationWithJob>>(emptyList())
+    val recentApplications: StateFlow<List<ApplicationWithJob>> = _recentApplications
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    // Load recent applications across all jobs
+    fun loadRecentApplications(limit: Int = 5) {
+        viewModelScope.launch {
+            _isLoading.value = true
+
+            // First get user's jobs
+            jobRepository.getMyJobs(0).collect { jobResult ->
+                if (jobResult.isSuccess) {
+                    val jobs = jobResult.getOrNull() ?: emptyList()
+
+                    if (jobs.isEmpty()) {
+                        _recentApplications.value = emptyList()
+                        _isLoading.value = false
+                        return@collect
+                    }
+
+                    // For each job, get applications
+                    val allApplications = mutableListOf<ApplicationWithJob>()
+
+                    jobs.forEach { job ->
+                        try {
+                            applicationRepository.getApplicationsForJob(job.id).collect { appResult ->
+                                if (appResult.isSuccess) {
+                                    val applications = appResult.getOrNull() ?: emptyList()
+                                    allApplications.addAll(applications)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // Log error but continue with other jobs
+                            println("Error fetching applications for job ${job.id}: ${e.message}")
+                        }
+                    }
+
+                    // Sort all applications by date (newest first) and take only the requested limit
+                    _recentApplications.value = allApplications
+                        .sortedByDescending { it.appliedAt }
+                        .take(limit)
+
+                    _isLoading.value = false
+                } else {
+                    _isLoading.value = false
+                }
+            }
+        }
+    }
+
+    // Get applications for a specific job
+    fun loadApplicationsForJob(jobId: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+
+            applicationRepository.getApplicationsForJob(jobId).collect { result ->
+                _isLoading.value = false
+                if (result.isSuccess) {
+                    _recentApplications.value = result.getOrNull() ?: emptyList()
+                }
+            }
+        }
+    }
+
+    // Update application status
+    fun updateApplicationStatus(applicationId: String, newStatus: String) {
+        viewModelScope.launch {
+            applicationRepository.updateApplicationStatus(applicationId, newStatus).collect { result ->
+                if (result.isSuccess) {
+                    // Refresh applications
+                    loadRecentApplications()
+                }
+            }
+        }
+    }
+}

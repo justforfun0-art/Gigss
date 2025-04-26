@@ -1,6 +1,5 @@
 package com.example.gigs.ui.screens.home
 
-// EmployeeHomeScreen.kt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +29,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -38,6 +39,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,19 +48,19 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.example.gigs.ui.components.GigWorkHeaderText
-import com.example.gigs.ui.components.GigWorkSubtitleText
-import com.example.gigs.viewmodel.AuthViewModel
-import com.example.gigs.viewmodel.JobViewModel
-import com.example.gigs.viewmodel.ProfileViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.example.gigs.data.model.EmployeeProfile
-import com.example.gigs.ui.screens.dashboard.JobItem
 import com.example.gigs.data.model.Job
-import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.draw.clip
+import com.example.gigs.data.model.JobWithEmployer
+import com.example.gigs.ui.components.GigWorkHeaderText
+import com.example.gigs.ui.components.GigWorkSubtitleText
+import com.example.gigs.ui.components.SwipeableJobCards
+import com.example.gigs.ui.screens.dashboard.JobItem
+import com.example.gigs.viewmodel.AuthViewModel
+import com.example.gigs.viewmodel.JobViewModel
+import com.example.gigs.viewmodel.ProfileViewModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,7 +68,9 @@ fun EmployeeHomeScreen(
     authViewModel: AuthViewModel,
     onSignOut: () -> Unit,
     onNavigateToDashboard: () -> Unit,
-    onNavigateToJobListing: (String) -> Unit
+    onNavigateToJobListing: (String) -> Unit,
+    onNavigateToMessages: () -> Unit = {}, // Optional with default
+    onNavigateToNotifications: () -> Unit = {} // Optional with default
 ) {
     var selectedTab by remember { mutableStateOf(0) }
     val profileViewModel: ProfileViewModel = hiltViewModel()
@@ -149,12 +153,13 @@ fun EmployeeHomeScreen(
         when (selectedTab) {
             0 -> EmployeeHomeTab(
                 modifier = Modifier.padding(paddingValues),
-                jobViewModel = jobViewModel
+                jobViewModel = jobViewModel,
+                onJobDetails = { jobId -> onNavigateToJobListing(jobId) }
             )
             1 -> EmployeeJobsTab(
                 modifier = Modifier.padding(paddingValues),
                 district = employeeProfile?.district ?: "",
-                onJobSelected = { jobId -> /* Navigate to job details */ }
+                onJobSelected = { jobId -> onNavigateToJobListing(jobId) }
             )
             2 -> EmployeeProfileTab(
                 modifier = Modifier.padding(paddingValues),
@@ -163,65 +168,120 @@ fun EmployeeHomeScreen(
         }
     }
 }
-
 @Composable
 fun EmployeeHomeTab(
     modifier: Modifier = Modifier,
-    jobViewModel: JobViewModel
+    jobViewModel: JobViewModel,
+    onJobDetails: (String) -> Unit
 ) {
     val featuredJobs by jobViewModel.featuredJobs.collectAsState()
     val isLoading by jobViewModel.isLoading.collectAsState()
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Create JobWithEmployer list by mapping the featuredJobs
+    val jobsWithEmployers = remember(featuredJobs) {
+        featuredJobs.map { job ->
+            // Use the employerId to create a readable employer name
+            // This is a placeholder - ideally, you would fetch real employer names
+            val employerName = job.employerId.takeIf { it.isNotEmpty() }?.let { id ->
+                // For now, just create a formatted name from the ID
+                "Employer ${id.takeLast(4)}"
+            } ?: "Unknown Employer"
+
+            JobWithEmployer(job, employerName)
+        }
+    }
 
     // Load featured jobs
     LaunchedEffect(Unit) {
-        jobViewModel.getFeaturedJobs(5) // Get 5 featured jobs
+        jobViewModel.getFeaturedJobs(10) // Get 10 featured jobs for better swiping experience
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(modifier = Modifier.height(16.dp))
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(16.dp))
 
-        GigWorkHeaderText(text = "Welcome to GigWork!")
+            GigWorkHeaderText(text = "Welcome to GigWork!")
 
-        Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-        GigWorkSubtitleText(
-            text = "Find local jobs that match your skills and availability"
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        Text(
-            text = "Featured Jobs",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.align(Alignment.Start)
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (isLoading) {
-            CircularProgressIndicator()
-        } else if (featuredJobs.isEmpty()) {
-            Text(
-                text = "No featured jobs available at the moment.",
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
+            GigWorkSubtitleText(
+                text = "Find local jobs that match your skills and availability"
             )
-        } else {
-            LazyColumn {
-                items(featuredJobs) { job ->
-                    JobItem(
-                        job = job,
-                        onClick = { /* Navigate to job details */ }
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Featured Jobs with Tinder-style swiping
+            Text(
+                text = "Featured Jobs",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.align(Alignment.Start)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Swipe instruction text
+            Text(
+                text = "Swipe right to apply, left to reject",
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            } else if (featuredJobs.isEmpty()) {
+                Text(
+                    text = "No featured jobs available at the moment.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                // Tinder-style swipeable job cards
+                SwipeableJobCards(
+                    jobs = featuredJobs,
+                    jobsWithEmployers = jobsWithEmployers, // Pass the employer info
+                    onJobAccepted = { job ->
+                        // Apply for job
+                        scope.launch {
+                            jobViewModel.applyForJob(job.id)
+                            snackbarHostState.showSnackbar(
+                                message = "Applied for: ${job.title}"
+                            )
+                        }
+                    },
+                    onJobRejected = { job ->
+                        // Reject job
+                        scope.launch {
+                            jobViewModel.markJobAsNotInterested(job.id)
+                            snackbarHostState.showSnackbar(
+                                message = "Job rejected: ${job.title}"
+                            )
+                        }
+                    },
+                    onJobDetails = { jobId -> onJobDetails(jobId) },
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
+
+        // Snackbar host at the bottom
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp)
+        )
     }
 }
 
@@ -231,6 +291,17 @@ fun EmployeeJobsTab(
     district: String,
     onJobSelected: (String) -> Unit
 ) {
+    val jobViewModel: JobViewModel = hiltViewModel()
+    val jobs by jobViewModel.jobs.collectAsState()
+    val isLoading by jobViewModel.isLoading.collectAsState()
+
+    // Load jobs for the district
+    LaunchedEffect(district) {
+        if (district.isNotEmpty()) {
+            jobViewModel.getJobsByDistrict(district)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -239,16 +310,29 @@ fun EmployeeJobsTab(
     ) {
         Spacer(modifier = Modifier.height(16.dp))
 
-        GigWorkHeaderText(text = "Find Jobs")
+        GigWorkHeaderText(text = "Jobs in $district")
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Placeholder for job listings
-        Text(
-            text = "Job listings will appear here.",
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center
-        )
+        if (isLoading) {
+            CircularProgressIndicator()
+        } else if (jobs.isEmpty()) {
+            Text(
+                text = "No jobs available in your area at the moment.",
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center
+            )
+        } else {
+            LazyColumn {
+                items(jobs) { job ->
+                    JobItem(
+                        job = job,
+                        onClick = { onJobSelected(job.id) }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+        }
     }
 }
 

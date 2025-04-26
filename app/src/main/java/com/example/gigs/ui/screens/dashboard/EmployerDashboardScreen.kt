@@ -1,49 +1,15 @@
 package com.example.gigs.ui.screens.dashboard
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.RateReview
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Update
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.Work
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,49 +17,58 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.example.gigs.data.model.Activity
-import com.example.gigs.data.model.ApplicationWithJob
-import com.example.gigs.data.model.CategoryStat
-import com.example.gigs.data.model.Job
-import com.example.gigs.data.model.LocationStat
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.gigs.data.model.*
+import com.example.gigs.data.repository.ApplicationRepository
+import com.example.gigs.data.repository.JobRepository
+import com.example.gigs.utils.DateUtils.formatDate
+import com.example.gigs.utils.DateUtils.formatTimeAgo
+import com.example.gigs.viewmodel.EmployerApplicationsViewModel
 import com.example.gigs.viewmodel.EmployerDashboardViewModel
-import io.ktor.websocket.Frame
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
-
-
+import java.util.*
+import javax.inject.Inject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmployerDashboardScreen(
-    viewModel: EmployerDashboardViewModel = hiltViewModel(),
+    dashboardViewModel: EmployerDashboardViewModel = hiltViewModel(),
+    applicationsViewModel: EmployerApplicationsViewModel = hiltViewModel(),
     onViewAllJobs: () -> Unit,
     onViewAllActivities: () -> Unit,
     onCreateJob: () -> Unit,
     onNavigateToNotifications: () -> Unit,
     onNavigateToMessages: () -> Unit,
+    onViewApplication: (String) -> Unit,
     onBackPressed: () -> Unit
 ) {
-    val dashboardData by viewModel.dashboardData.collectAsState()
-    val recentActivities by viewModel.recentActivities.collectAsState()
-    val recentJobs by viewModel.recentJobs.collectAsState()
-    val locationStats by viewModel.locationStats.collectAsState()
-    val categoryStats by viewModel.categoryStats.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
+    val dashboardData by dashboardViewModel.dashboardData.collectAsState()
+    val recentActivities by dashboardViewModel.recentActivities.collectAsState()
+    val recentJobs by dashboardViewModel.recentJobs.collectAsState()
+    val recentApplications by applicationsViewModel.recentApplications.collectAsState()
+    val locationStats by dashboardViewModel.locationStats.collectAsState()
+    val categoryStats by dashboardViewModel.categoryStats.collectAsState()
+    val isLoading by dashboardViewModel.isLoading.collectAsState()
+    val isLoadingApplications by applicationsViewModel.isLoading.collectAsState()
 
+    // Load dashboard data and applications
     LaunchedEffect(Unit) {
-        viewModel.loadDashboardData()
+        dashboardViewModel.loadDashboardData()
+        applicationsViewModel.loadRecentApplications()
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Frame.Text("Employer Dashboard") },
+                title = { Text("Employer Dashboard") },
                 navigationIcon = {
                     IconButton(onClick = onBackPressed) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
@@ -144,7 +119,8 @@ fun EmployerDashboardScreen(
                             title = "Total Jobs",
                             value = dashboardData?.totalJobs ?: 0,
                             icon = Icons.Default.Work,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            onClick = onViewAllJobs
                         )
 
                         Spacer(modifier = Modifier.width(16.dp))
@@ -153,7 +129,8 @@ fun EmployerDashboardScreen(
                             title = "Active Jobs",
                             value = dashboardData?.activeJobs ?: 0,
                             icon = Icons.Default.Visibility,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            onClick = onViewAllJobs
                         )
                     }
 
@@ -166,7 +143,8 @@ fun EmployerDashboardScreen(
                             title = "Applications",
                             value = dashboardData?.totalApplicationsReceived ?: 0,
                             icon = Icons.Default.Description,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            onClick = { /* Navigate to all applications */ }
                         )
 
                         Spacer(modifier = Modifier.width(16.dp))
@@ -182,8 +160,68 @@ fun EmployerDashboardScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
+                // Recent Applications Section
+                item {
+                    Text(
+                        text = "Recent Applications",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                if (isLoadingApplications) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(100.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(40.dp))
+                        }
+                    }
+                } else if (recentApplications.isEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "No applications yet",
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Button(onClick = onCreateJob) {
+                                    Text("Create a job to receive applications")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    items(recentApplications) { application ->
+                        ApplicationItem(
+                            application = application,
+                            onClick = { onViewApplication(application.id) }
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
+
                 // Recent Jobs Section
                 item {
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     SectionHeader(
                         title = "Your Jobs",
                         onViewAll = onViewAllJobs
@@ -204,7 +242,10 @@ fun EmployerDashboardScreen(
                     }
                 } else {
                     items(recentJobs) { job ->
-                        JobItem(job = job)
+                        JobItem(
+                            job = job,
+                            onClick = { /* Navigate to job details */ }
+                        )
 
                         Spacer(modifier = Modifier.height(8.dp))
                     }
@@ -275,18 +316,22 @@ fun EmployerDashboardScreen(
     }
 }
 
-// Common composables for both dashboard screens
+// Common composables for dashboard screens
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatCard(
     title: String,
     value: Int? = null,
     valueText: String? = null,
     icon: ImageVector,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null
 ) {
     Card(
-        modifier = modifier
+        modifier = modifier,
+        onClick = { onClick?.invoke() },
+        enabled = onClick != null
     ) {
         Column(
             modifier = Modifier
@@ -371,6 +416,7 @@ fun EmptyStateMessage(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ApplicationItem(
     application: ApplicationWithJob,
@@ -378,7 +424,8 @@ fun ApplicationItem(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        onClick = { onClick?.invoke() }
+        onClick = { onClick?.invoke() },
+        enabled = onClick != null
     ) {
         Column(
             modifier = Modifier
@@ -426,10 +473,19 @@ fun ApplicationItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Applicant ID: ${application.employeeId}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JobItem(
     job: Job,
@@ -437,7 +493,8 @@ fun JobItem(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        onClick = { onClick?.invoke() }
+        onClick = { onClick?.invoke() },
+        enabled = onClick != null
     ) {
         Column(
             modifier = Modifier
@@ -679,82 +736,5 @@ fun CategoryStatsChart(
                 }
             }
         }
-    }
-}
-
-// Utility functions
-fun formatDate(dateString: String): String {
-    try {
-        val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
-        inputFormat.timeZone = TimeZone.getTimeZone("UTC")
-        val date = inputFormat.parse(dateString)
-
-        val outputFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
-        return outputFormat.format(date)
-    } catch (e: Exception) {
-        return dateString
-    }
-}
-
-fun formatTimestamp(dateString: String): String {
-    return try {
-        // First try the full ISO format with milliseconds
-        val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
-        inputFormat.timeZone = TimeZone.getTimeZone("UTC")
-
-        var date: Date? = null
-
-        try {
-            date = inputFormat.parse(dateString)
-        } catch (e: Exception) {
-            // If that fails, try without milliseconds
-            val simpleFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
-            simpleFormat.timeZone = TimeZone.getTimeZone("UTC")
-
-            try {
-                date = simpleFormat.parse(dateString)
-            } catch (e: Exception) {
-                // If that fails too, try just the date
-                val dateOnlyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                date = dateOnlyFormat.parse(dateString)
-            }
-        }
-
-        if (date != null) {
-            val outputFormat = SimpleDateFormat("MMM dd, yyyy h:mm a", Locale.getDefault())
-            outputFormat.timeZone = TimeZone.getDefault() // Convert to local time
-            return outputFormat.format(date)
-        } else {
-            // If all parsing attempts fail, return the original string
-            return dateString
-        }
-    } catch (e: Exception) {
-        // If any exception occurs, return the original string
-        return dateString
-    }
-}
-
-
-fun formatTimeAgo(dateString: String): String {
-    try {
-        val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
-        inputFormat.timeZone = TimeZone.getTimeZone("UTC")
-        val date = inputFormat.parse(dateString)
-
-        val now = Calendar.getInstance().time
-        val diffInMillis = now.time - date.time
-        val diffInMinutes = diffInMillis / (60 * 1000)
-        val diffInHours = diffInMillis / (60 * 60 * 1000)
-        val diffInDays = diffInMillis / (24 * 60 * 60 * 1000)
-
-        return when {
-            diffInMinutes < 1 -> "Just now"
-            diffInMinutes < 60 -> "$diffInMinutes min ago"
-            diffInHours < 24 -> "$diffInHours hr ago"
-            diffInDays < 7 -> "$diffInDays days ago"
-            else -> formatDate(dateString)
-        }
-    } catch (e: Exception) {
-        return dateString
     }
 }

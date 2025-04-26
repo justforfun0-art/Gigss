@@ -48,8 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.gigs.data.model.Conversation
 import com.example.gigs.data.model.Message
-import com.example.gigs.ui.screens.dashboard.formatTimeAgo
-import com.example.gigs.ui.screens.dashboard.formatTimestamp
+import com.example.gigs.utils.DateUtils.formatTimeAgo
+import com.example.gigs.utils.DateUtils.formatTimestamp
 import com.example.gigs.viewmodel.ChatViewModel
 import com.example.gigs.viewmodel.ConversationsViewModel
 

@@ -1,50 +1,37 @@
 package com.example.gigs.navigation
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import com.example.gigs.data.model.AuthState
-import com.example.gigs.data.model.UserType
+import com.example.gigs.data.model.*
+import com.example.gigs.data.repository.ApplicationRepository
 import com.example.gigs.data.repository.AuthRepository
 import com.example.gigs.ui.screens.admin.AdminJobApprovalScreen
 import com.example.gigs.ui.screens.auth.OtpVerificationScreen
 import com.example.gigs.ui.screens.auth.PhoneAuthScreen
 import com.example.gigs.ui.screens.auth.UserTypeSelectionScreen
-import com.example.gigs.ui.screens.dashboard.EmployeeDashboardScreen
+import com.example.gigs.ui.screens.dashboard.ApplicationItem
 import com.example.gigs.ui.screens.dashboard.EmployerDashboardScreen
 import com.example.gigs.ui.screens.home.EmployeeHomeScreen
 import com.example.gigs.ui.screens.home.EmployerHomeScreen
@@ -53,7 +40,6 @@ import com.example.gigs.ui.screens.jobs.JobListingScreen
 import com.example.gigs.ui.screens.jobs.JobPostingScreen
 import com.example.gigs.ui.screens.messages.ChatScreen
 import com.example.gigs.ui.screens.messages.ConversationsScreen
-import com.example.gigs.ui.screens.notifications.NotificationsScreen
 import com.example.gigs.ui.screens.profile.BasicProfileSetupScreen
 import com.example.gigs.ui.screens.profile.EmployeeProfileSetupScreen
 import com.example.gigs.ui.screens.profile.EmployerProfileSetupScreen
@@ -63,6 +49,17 @@ import com.example.gigs.ui.screens.welcome.WelcomeScreen
 import com.example.gigs.viewmodel.AuthViewModel
 import com.example.gigs.viewmodel.NotificationViewModel
 import com.example.gigs.viewmodel.ProfileViewModel
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+import android.widget.Toast
+import com.example.gigs.ui.screens.dashboard.EmployeeDashboardScreen
+import com.example.gigs.ui.screens.notifications.NotificationsScreen
+
+// Add applications view screen route
+object ApplicationsView : Screen("applications_view")
 
 @Composable
 fun AppNavHost(
@@ -193,6 +190,7 @@ fun AppNavHost(
         composable(Screen.OtpVerification.route) {
             OtpVerificationScreen(
                 authViewModel = authViewModel,
+                profileViewModel = profileViewModel,
                 onVerificationSuccess = {
                     // Important: After verification, check state and navigate accordingly
                     when (authState) {
@@ -227,6 +225,12 @@ fun AppNavHost(
                             // Let auth state handle other cases
                             authViewModel.checkAuthState()
                         }
+                    }
+                },
+                onNavigateToWelcome = {
+                    // Add this new parameter
+                    navController.navigate(Screen.Welcome.route) {
+                        popUpTo(0) { inclusive = true }
                     }
                 }
             )
@@ -304,6 +308,12 @@ fun AppNavHost(
                 },
                 onNavigateToJobListing = { district ->
                     navController.navigate(Screen.JobListing.createRoute(district))
+                },
+                onNavigateToMessages = {
+                    navController.navigate(Screen.Conversations.route)
+                },
+                onNavigateToNotifications = {
+                    navController.navigate(Screen.Notifications.route)
                 }
             )
         }
@@ -357,6 +367,7 @@ fun AppNavHost(
             JobDetailsScreen(
                 jobViewModel = hiltViewModel(),
                 jobId = jobId,
+                navController = navController, // Added this parameter
                 onBackPressed = { navController.popBackStack() },
                 onApply = {
                     // Apply for job and show success message, then return to job details
@@ -429,35 +440,7 @@ fun AppNavHost(
         composable(Screen.Notifications.route) {
             NotificationsScreen(
                 viewModel = hiltViewModel(),
-                onNotificationClick = { notification ->
-                    // Navigate based on notification type
-                    when (notification.type) {
-                        "new_application" -> {
-                            notification.relatedId?.let { applicationId ->
-                                // Navigate to application details when implemented
-                            }
-                        }
-                        "new_message" -> {
-                            notification.relatedId?.let { conversationId ->
-                                // Navigate to conversation when we have receiver info
-                                navController.navigate(Screen.Conversations.route)
-                            }
-                        }
-                        "job_match" -> {
-                            notification.relatedId?.let { jobId ->
-                                navController.navigate(Screen.JobDetails.createRoute(jobId))
-                            }
-                        }
-                        "job_approval", "job_rejection" -> {
-                            notification.relatedId?.let { jobId ->
-                                navController.navigate(Screen.JobDetails.createRoute(jobId))
-                            }
-                        }
-                        "application_update" -> {
-                            // Navigate to application status screen when implemented
-                        }
-                    }
-                },
+                navController = navController,
                 onBackPressed = { navController.popBackStack() }
             )
         }
@@ -505,23 +488,33 @@ fun AppNavHost(
 
         // Dashboard feature
         composable(Screen.EmployeeDashboard.route) {
+            val context = LocalContext.current
             EmployeeDashboardScreen(
-                viewModel = hiltViewModel(),
+                dashboardViewModel = hiltViewModel(),
+                profileViewModel = hiltViewModel(),
                 onViewAllApplications = {
                     // Navigate to applications list when implemented
+                    // For now, we'll just show a toast
+                    Toast.makeText(context, "View all applications", Toast.LENGTH_SHORT).show()
                 },
                 onViewAllActivities = {
                     // Navigate to activities list when implemented
+                    Toast.makeText(context, "View all activities", Toast.LENGTH_SHORT).show()
                 },
                 onNavigateToNotifications = { navController.navigate(Screen.Notifications.route) },
                 onNavigateToMessages = { navController.navigate(Screen.Conversations.route) },
+                onEditProfile = {
+                    // Navigate to edit profile screen when implemented
+                    Toast.makeText(context, "Edit profile", Toast.LENGTH_SHORT).show()
+                },
                 onBackPressed = { navController.popBackStack() }
             )
         }
 
         composable(Screen.EmployerDashboard.route) {
             EmployerDashboardScreen(
-                viewModel = hiltViewModel(),
+                dashboardViewModel = hiltViewModel(),
+                applicationsViewModel = hiltViewModel(),
                 onViewAllJobs = {
                     // Navigate to jobs list when implemented
                 },
@@ -531,6 +524,20 @@ fun AppNavHost(
                 onCreateJob = { navController.navigate(Screen.CreateJob.route) },
                 onNavigateToNotifications = { navController.navigate(Screen.Notifications.route) },
                 onNavigateToMessages = { navController.navigate(Screen.Conversations.route) },
+                onViewApplication = { applicationId ->
+                    // Navigate to application details when implemented
+                },
+                onBackPressed = { navController.popBackStack() }
+            )
+        }
+
+        // Applications View Screen
+        composable(ApplicationsView.route) {
+            ApplicationsViewScreen(
+                viewModel = hiltViewModel(),
+                onApplicationSelected = { applicationId ->
+                    // Navigate to application details when implemented
+                },
                 onBackPressed = { navController.popBackStack() }
             )
         }
@@ -631,6 +638,94 @@ fun AdminButton(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Admin Dashboard")
+        }
+    }
+}
+
+// Define ApplicationsViewScreen
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ApplicationsViewScreen(
+    viewModel: ApplicationsViewModel = hiltViewModel(),
+    onApplicationSelected: (String) -> Unit,
+    onBackPressed: () -> Unit
+) {
+    val applications by viewModel.applications.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.loadAllApplications()
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("My Applications") },
+                navigationIcon = {
+                    IconButton(onClick = onBackPressed) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        if (isLoading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        } else if (applications.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("No applications found")
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(applications) { application ->
+                    ApplicationItem(
+                        application = application,
+                        onClick = { onApplicationSelected(application.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+// Define ApplicationsViewModel
+@HiltViewModel
+class ApplicationsViewModel @Inject constructor(
+    private val applicationRepository: ApplicationRepository
+) : ViewModel() {
+    private val _applications = MutableStateFlow<List<ApplicationWithJob>>(emptyList())
+    val applications: StateFlow<List<ApplicationWithJob>> = _applications
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    fun loadAllApplications() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            applicationRepository.getMyApplications(0).collect { result ->
+                _isLoading.value = false
+                if (result.isSuccess) {
+                    _applications.value = result.getOrNull() ?: emptyList()
+                }
+            }
         }
     }
 }

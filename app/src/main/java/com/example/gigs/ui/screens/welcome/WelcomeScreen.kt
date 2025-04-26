@@ -2,6 +2,7 @@ package com.example.gigs.ui.screens.welcome
 
 // WelcomeScreen.kt
 
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,18 +19,24 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.gigs.R
+import com.example.gigs.data.model.UserType
 import com.example.gigs.ui.components.GigWorkOutlinedButton
 import com.example.gigs.ui.components.GigWorkPrimaryButton
 import com.example.gigs.ui.components.GigWorkSubtitleText
 import com.example.gigs.ui.theme.PrimaryBlue
+import com.example.gigs.viewmodel.AuthViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun WelcomeScreen(
@@ -131,6 +138,62 @@ fun WelcomeScreen(
                 onClick = onPostJobsClick,
                 modifier = Modifier.fillMaxWidth()
             )
+
+
+
+          /*  TypeSelectionWithCheck(
+                authViewModel = hiltViewModel(),
+                onFindJobsClick = onFindJobsClick,
+                onPostJobsClick = onPostJobsClick
+            )
+
+           */
         }
     }
+
+}
+@Composable
+fun TypeSelectionWithCheck(
+    authViewModel: AuthViewModel = hiltViewModel(),
+    onFindJobsClick: () -> Unit,
+    onPostJobsClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // Employee button
+    GigWorkPrimaryButton(
+        text = "Find Jobs",
+        onClick = {
+            scope.launch {
+                val result = authViewModel.checkUserType(UserType.EMPLOYEE)
+                if (result.isSuccess) {
+                    onFindJobsClick()
+                } else {
+                    // Show error toast
+                    Toast.makeText(context, result.exceptionOrNull()?.message ?: "Cannot register as employee", Toast.LENGTH_LONG).show()
+                }
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    )
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    // Employer button
+    GigWorkOutlinedButton(
+        text = "Post Jobs",
+        onClick = {
+            scope.launch {
+                val result = authViewModel.checkUserType(UserType.EMPLOYER)
+                if (result.isSuccess) {
+                    onPostJobsClick()
+                } else {
+                    // Show error toast
+                    Toast.makeText(context, result.exceptionOrNull()?.message ?: "Cannot register as employer", Toast.LENGTH_LONG).show()
+                }
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    )
 }

@@ -523,4 +523,15 @@ class JobRepository @Inject constructor(
             emit(Result.failure(e))
         }
     }
+
+    suspend fun markJobAsNotInterested(jobId: String): Flow<Result<Boolean>> {
+        // Store in local preferences or remote database that user is not interested in this job
+        // Return Result.success(true) if successful
+        return flow { emit(Result.success(true)) }
+    }
+
+    suspend fun getRejectedJobs(): Flow<Result<Set<String>>> {
+        // Retrieve the set of job IDs the user has rejected
+        return flow { emit(Result.success(emptySet<String>())) }
+    }
 }

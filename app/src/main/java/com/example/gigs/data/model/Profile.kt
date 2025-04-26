@@ -63,3 +63,8 @@ data class EmployerProfile(
     @SerialName("updated_at")
     val updatedAt: String? = null
 )
+
+data class JobWithEmployer(
+    val job: Job,
+    val employerName: String
+)

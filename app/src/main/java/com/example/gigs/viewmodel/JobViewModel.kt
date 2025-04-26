@@ -43,12 +43,17 @@ class JobViewModel @Inject constructor(
     private val _appliedJobIds = MutableStateFlow<Set<String>>(emptySet())
     val appliedJobIds: StateFlow<Set<String>> = _appliedJobIds
 
+    // Track jobs the user has rejected/marked as not interested
+    private val _rejectedJobIds = MutableStateFlow<Set<String>>(emptySet())
+    val rejectedJobIds: StateFlow<Set<String>> = _rejectedJobIds
+
     private val _applicationStatus = MutableStateFlow<ApplicationStatus>(ApplicationStatus.IDLE)
     val applicationStatus: StateFlow<ApplicationStatus> = _applicationStatus
 
     // Load the user's applications when the ViewModel is created
     init {
         loadUserApplications()
+        loadRejectedJobs()
     }
 
     // Add this function to load all jobs the user has applied to
@@ -69,11 +74,64 @@ class JobViewModel @Inject constructor(
         }
     }
 
+    // Load rejected jobs from local storage or remote database
+    private fun loadRejectedJobs() {
+        viewModelScope.launch {
+            try {
+                // You could store these in a local database or user preferences
+                // For now, we'll try to get them from the repository if implemented
+                jobRepository.getRejectedJobs().collect { result ->
+                    if (result.isSuccess) {
+                        val jobIds = result.getOrNull() ?: emptySet()
+                        _rejectedJobIds.value = jobIds
+                        Log.d("JobViewModel", "Loaded ${jobIds.size} rejected job IDs")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("JobViewModel", "Error loading rejected jobs: ${e.message}")
+                // If there's an error, just use an empty set
+                _rejectedJobIds.value = emptySet()
+            }
+        }
+    }
+
+    // Mark a job as not interested/rejected
+    fun markJobAsNotInterested(jobId: String) {
+        viewModelScope.launch {
+            try {
+                // Add to rejected jobs set locally
+                val updatedRejectedJobs = _rejectedJobIds.value.toMutableSet()
+                updatedRejectedJobs.add(jobId)
+                _rejectedJobIds.value = updatedRejectedJobs
+
+                // Save to repository if implemented
+                jobRepository.markJobAsNotInterested(jobId).collect { result ->
+                    if (result.isSuccess) {
+                        Log.d("JobViewModel", "Successfully marked job as not interested: $jobId")
+                    } else {
+                        Log.e("JobViewModel", "Error marking job as not interested: ${result.exceptionOrNull()?.message}")
+                    }
+                }
+
+                // Refresh featured jobs to remove the rejected one
+                refreshFeaturedJobs()
+            } catch (e: Exception) {
+                Log.e("JobViewModel", "Exception marking job as not interested: ${e.message}", e)
+            }
+        }
+    }
+
     // Helper function to check if the user has applied to a job
     fun hasAppliedToJob(jobId: String): Boolean {
         return _appliedJobIds.value.contains(jobId)
     }
 
+    // Helper function to check if the user has rejected a job
+    fun hasRejectedJob(jobId: String): Boolean {
+        return _rejectedJobIds.value.contains(jobId)
+    }
+
+    // Apply for a job with Tinder-like swiping
     fun applyForJob(jobId: String) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -93,6 +151,9 @@ class JobViewModel @Inject constructor(
                         _appliedJobIds.value = updatedAppliedJobs
 
                         _applicationStatus.value = ApplicationStatus.SUCCESS
+
+                        // Refresh featured jobs to remove the applied one
+                        refreshFeaturedJobs()
                     } else {
                         val errorMessage = result.exceptionOrNull()?.message ?: "Unknown error"
                         Log.e("JobViewModel", "Error applying for job: $errorMessage")
@@ -125,19 +186,45 @@ class JobViewModel @Inject constructor(
         data class ERROR(val message: String) : ApplicationStatus()
     }
 
+    // Refresh featured jobs (useful after applying or rejecting)
+    private fun refreshFeaturedJobs() {
+        // Get the current limit or use default
+        val currentLimit = if (_featuredJobs.value.isNotEmpty()) {
+            _featuredJobs.value.size
+        } else {
+            5
+        }
+
+        // Reload with same limit
+        getFeaturedJobs(currentLimit)
+    }
+
+    // Get featured jobs and filter out applied/rejected jobs
     fun getFeaturedJobs(limit: Int = 5) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                jobRepository.getFeaturedJobs(limit).collect { result ->
+                jobRepository.getFeaturedJobs(limit * 2).collect { result -> // Get more than needed to account for filtering
                     if (result.isSuccess) {
-                        _featuredJobs.value = result.getOrNull() ?: emptyList()
+                        val allJobs = result.getOrNull() ?: emptyList()
+
+                        // Filter out jobs the user has already interacted with
+                        val filteredJobs = allJobs.filter { job ->
+                            !_appliedJobIds.value.contains(job.id) &&
+                                    !_rejectedJobIds.value.contains(job.id)
+                        }
+
+                        // Take only the requested limit
+                        _featuredJobs.value = filteredJobs.take(limit)
+
+                        Log.d("JobViewModel", "Loaded ${_featuredJobs.value.size} featured jobs after filtering")
                     }
                     _isLoading.value = false
                 }
             } catch (e: Exception) {
                 _isLoading.value = false
                 _featuredJobs.value = emptyList()
+                Log.e("JobViewModel", "Error loading featured jobs: ${e.message}")
             }
         }
     }
@@ -203,9 +290,15 @@ class JobViewModel @Inject constructor(
                 Log.d("JobViewModel", "Getting jobs for district: $district")
                 jobRepository.getJobsByLocation(district).collect { result ->
                     if (result.isSuccess) {
-                        val jobs = result.getOrNull() ?: emptyList()
-                        Log.d("JobViewModel", "Retrieved ${jobs.size} jobs for district $district")
-                        _jobs.value = jobs
+                        val allJobs = result.getOrNull() ?: emptyList()
+                        Log.d("JobViewModel", "Retrieved ${allJobs.size} jobs for district $district")
+
+                        // Filter out jobs the user has already interacted with
+                        val filteredJobs = allJobs.filter { job ->
+                            !_rejectedJobIds.value.contains(job.id)
+                        }
+
+                        _jobs.value = filteredJobs
                     } else {
                         Log.e("JobViewModel", "Error: ${result.exceptionOrNull()?.message}")
                         _jobs.value = emptyList()

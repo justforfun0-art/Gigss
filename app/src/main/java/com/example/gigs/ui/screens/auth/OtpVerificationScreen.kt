@@ -1,5 +1,6 @@
 package com.example.gigs.ui.screens.auth
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
@@ -24,43 +26,117 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.gigs.data.model.OtpState
 import com.example.gigs.ui.components.GigWorkHeaderText
 import com.example.gigs.ui.components.GigWorkPrimaryButton
 import com.example.gigs.ui.components.GigWorkSubtitleText
 import com.example.gigs.ui.components.GigWorkTextField
 import com.example.gigs.viewmodel.AuthViewModel
+import com.example.gigs.viewmodel.ProfileViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OtpVerificationScreen(
     authViewModel: AuthViewModel,
-    onVerificationSuccess: () -> Unit
+    profileViewModel: ProfileViewModel = hiltViewModel(),
+    onVerificationSuccess: () -> Unit,
+    onNavigateToWelcome: () -> Unit = {} // Optional parameter for navigation to welcome screen on error
 ) {
     val otpState by authViewModel.otpState.collectAsState()
     val phoneNumber by authViewModel.phoneNumber.collectAsState()
+    val userType by profileViewModel.userType.collectAsState()
+    val authState by authViewModel.authState.collectAsState()
+
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     var otp by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
-    val context = LocalContext.current
 
+    // Flag to track if user type check has been performed
+    var userTypeChecked by remember { mutableStateOf(false) }
+
+    // Flag to prevent verification success callback when role mismatch
+    var roleCheckFailed by remember { mutableStateOf(false) }
+
+    // Error dialog state
+    var showErrorDialog by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf("") }
+
+    // Handle OTP state changes
     LaunchedEffect(otpState) {
         when (otpState) {
             is OtpState.Verified, is OtpState.AutoVerified -> {
-                onVerificationSuccess()
+                // Only check user type if not already checked
+                if (!userTypeChecked) {
+                    userTypeChecked = true
+
+                    // Use the scope to launch the coroutine for checking user type
+                    scope.launch {
+                        val result = authViewModel.checkUserType(userType)
+                        if (result.isSuccess) {
+                            // Only proceed with navigation if role check passed
+                            if (!roleCheckFailed) {
+                                onVerificationSuccess()
+                            }
+                        } else {
+                            // User type is incompatible
+                            roleCheckFailed = true
+
+                            // Sign out the user first
+                            authViewModel.signOut()
+
+                            // Small delay to ensure signOut has started
+                            delay(100)
+
+                            // Now show the error dialog
+                            errorMessage = result.exceptionOrNull()?.message ?:
+                                    "You are not allowed to register with this account type."
+                            showErrorDialog = true
+                        }
+                    }
+                }
             }
             is OtpState.Error -> {
-                val errorMessage = (otpState as OtpState.Error).message
-                snackbarHostState.showSnackbar(errorMessage)
+                val errorMsg = (otpState as OtpState.Error).message
+                snackbarHostState.showSnackbar(errorMsg)
             }
-            else -> {}
+            else -> {
+                // Reset user type checked flag when OTP state changes
+                userTypeChecked = false
+                roleCheckFailed = false
+            }
         }
+    }
+
+    // Error dialog for role restriction
+    if (showErrorDialog) {
+        AlertDialog(
+            onDismissRequest = { /* Do nothing on outside click */ },
+            title = { Text("Account Restriction") },
+            text = { Text(errorMessage) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showErrorDialog = false
+                        // Navigate back to welcome screen ONLY when user clicks OK
+                        onNavigateToWelcome()
+                    }
+                ) {
+                    Text("OK")
+                }
+            }
+        )
     }
 
     Scaffold(

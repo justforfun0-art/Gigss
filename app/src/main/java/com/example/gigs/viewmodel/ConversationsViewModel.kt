@@ -90,6 +90,20 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    // Create a new function in ChatViewModel.kt
+    fun createNewConversation(jobId: String, employerId: String, employeeId: String, onSuccess: (String) -> Unit) {
+        viewModelScope.launch {
+            messageRepository.createConversation(jobId, employerId, employeeId).collect { result ->
+                if (result.isSuccess) {
+                    val conversationId = result.getOrNull()
+                    if (conversationId != null) {
+                        onSuccess(conversationId)
+                    }
+                }
+            }
+        }
+    }
+
     suspend fun createConversation(jobId: String?, employerId: String, employeeId: String): Flow<Result<String>> {
         return messageRepository.createConversation(jobId, employerId, employeeId)
     }
