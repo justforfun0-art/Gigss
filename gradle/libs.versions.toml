@@ -24,6 +24,7 @@ runner = "1.6.2" # Use the latest version
 firebase-crashlytics = "18.6.0"
 glance = "1.1.1"
 playServicesFitness = "21.2.0"
+composeMaterial = "1.4.1"
 
 [libraries]
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }
@@ -95,6 +96,7 @@ hilt-android-testing = { group = "com.google.dagger", name = "hilt-android-testi
 androidx-runner = { group = "androidx.test", name = "runner", version.ref = "runner" }
 androidx-glance = { group = "androidx.glance", name = "glance", version.ref = "glance" }
 play-services-fitness = { group = "com.google.android.gms", name = "play-services-fitness", version.ref = "playServicesFitness" }
+androidx-compose-material = { group = "androidx.wear.compose", name = "compose-material", version.ref = "composeMaterial" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

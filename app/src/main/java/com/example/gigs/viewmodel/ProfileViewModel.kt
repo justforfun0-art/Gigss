@@ -11,6 +11,7 @@ import com.example.gigs.data.model.Profile
 import com.example.gigs.data.model.UserType
 import com.example.gigs.data.model.WorkPreference
 import com.example.gigs.data.repository.AuthRepository
+import com.example.gigs.data.repository.EmployerProfileRepository
 import com.example.gigs.data.repository.ProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,8 +26,13 @@ import javax.inject.Inject
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val employerProfileRepository: EmployerProfileRepository // Make sure this is injected
 ) : ViewModel() {
+
+    // Add a state for employer profile
+    private val _employerProfile = MutableStateFlow<EmployerProfile?>(null)
+    val employerProfile: StateFlow<EmployerProfile?> = _employerProfile
 
     private val _profileState = MutableStateFlow<ProfileState>(ProfileState.Initial)
     val profileState: StateFlow<ProfileState> = _profileState
@@ -188,6 +194,20 @@ class ProfileViewModel @Inject constructor(
             }
         }
     }
+
+    // Add this function to load employer profile
+    fun getEmployerProfile() {
+        viewModelScope.launch {
+            val userId = authRepository.getCurrentUserId() ?: return@launch
+
+            employerProfileRepository.getEmployerProfile(userId).collect { result ->
+                if (result.isSuccess) {
+                    _employerProfile.value = result.getOrNull()
+                }
+            }
+        }
+    }
+
 
     fun createEmployerProfile(
         companyName: String,

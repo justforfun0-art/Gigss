@@ -69,10 +69,6 @@ fun OtpVerificationScreen(
     // Flag to prevent verification success callback when role mismatch
     var roleCheckFailed by remember { mutableStateOf(false) }
 
-    // Error dialog state
-    var showErrorDialog by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf("") }
-
     // Handle OTP state changes
     LaunchedEffect(otpState) {
         when (otpState) {
@@ -93,16 +89,21 @@ fun OtpVerificationScreen(
                             // User type is incompatible
                             roleCheckFailed = true
 
-                            // Sign out the user first
-                            authViewModel.signOut()
+                            // Get error message
+                            val errorMsg = result.exceptionOrNull()?.message ?:
+                            "You are not allowed to register with this account type."
 
-                            // Small delay to ensure signOut has started
-                            delay(100)
+                            // Show error as Toast
+                            Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
 
-                            // Now show the error dialog
-                            errorMessage = result.exceptionOrNull()?.message ?:
-                                    "You are not allowed to register with this account type."
-                            showErrorDialog = true
+                            // Small delay to ensure the Toast is visible
+                            delay(500)
+
+                            // Force logout using your new method
+                            authViewModel.forceLogout()
+
+                            // Navigate immediately without waiting for dialog
+                            onNavigateToWelcome()
                         }
                     }
                 }
@@ -117,26 +118,6 @@ fun OtpVerificationScreen(
                 roleCheckFailed = false
             }
         }
-    }
-
-    // Error dialog for role restriction
-    if (showErrorDialog) {
-        AlertDialog(
-            onDismissRequest = { /* Do nothing on outside click */ },
-            title = { Text("Account Restriction") },
-            text = { Text(errorMessage) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showErrorDialog = false
-                        // Navigate back to welcome screen ONLY when user clicks OK
-                        onNavigateToWelcome()
-                    }
-                ) {
-                    Text("OK")
-                }
-            }
-        )
     }
 
     Scaffold(

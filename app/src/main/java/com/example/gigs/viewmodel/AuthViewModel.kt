@@ -13,6 +13,7 @@ import com.example.gigs.data.repository.ProfileRepository
 import com.google.android.play.core.integrity.e
 import com.google.firebase.auth.PhoneAuthCredential
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
@@ -27,7 +28,7 @@ class AuthViewModel @Inject constructor(
     private val profileRepository: ProfileRepository
 ) : ViewModel() {
 
-    private val _authState = MutableStateFlow<AuthState>(AuthState.Initial)
+     private val _authState = MutableStateFlow<AuthState>(AuthState.Initial)
     val authState: StateFlow<AuthState> = _authState
 
     private val _otpState = MutableStateFlow<OtpState>(OtpState.Initial)
@@ -120,13 +121,17 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    fun signOut() {
-        // Set auth state to Unauthenticated FIRST
+    fun signOut(): Job {
+        // Set the auth state to Unauthenticated FIRST to ensure UI updates immediately
         _authState.value = AuthState.Unauthenticated
 
-        // Then perform the repository sign out
-        viewModelScope.launch {
-            authRepository.signOut()
+        return viewModelScope.launch {
+            try {
+                // Then perform the repository sign out
+                authRepository.signOut()
+            } catch (e: Exception) {
+                println("Error during sign out: ${e.message}")
+            }
         }
     }
 
@@ -139,17 +144,46 @@ class AuthViewModel @Inject constructor(
      * restricted and logged out
      */
     suspend fun checkUserType(requestedType: UserType): Result<Boolean> {
-        val userId = getCurrentUserId() ?: return Result.failure(Exception("User not authenticated"))
+        // If user is not authenticated yet, return success to allow them to continue
+        val userId = getCurrentUserId() ?: return Result.success(true)
 
         // Check if user can register as the requested type
         val result = authRepository.checkExistingUserType("", requestedType)
 
         if (result.isFailure) {
-            // User has a role mismatch - log them out
-            signOut()
+            // IMMEDIATELY set auth state to unauthenticated to prevent any race conditions
+            _authState.value = AuthState.Unauthenticated
+
+            // Then sign out in the background and wait for completion
+            val signOutJob = signOut()
+            signOutJob.join() // Wait for signout to complete
+
+            // Reset other state values
+            _otpState.value = OtpState.Initial
+            _phoneNumber.value = ""
+            _verificationId.value = ""
         }
 
         return result
     }
 
+    // In AuthViewModel.kt
+    // Add this method to AuthViewModel
+    fun forceLogout() {
+        // Set auth state to Unauthenticated immediately
+        _authState.value = AuthState.Unauthenticated
+
+        // Then perform the repository sign out
+        viewModelScope.launch {
+            try {
+                authRepository.signOut()
+                // Reset all auth-related state to initial values
+                _otpState.value = OtpState.Initial
+                _phoneNumber.value = ""
+                _verificationId.value = ""
+            } catch (e: Exception) {
+                println("Error during sign out: ${e.message}")
+            }
+        }
+    }
 }

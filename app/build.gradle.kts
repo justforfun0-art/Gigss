@@ -164,6 +164,7 @@ object Versions {
 dependencies {
     implementation(libs.androidx.glance)
     implementation(libs.play.services.fitness)
+    implementation(libs.androidx.compose.material)
     // Force specific versions for libraries that might cause conflicts
     configurations.all {
         resolutionStrategy {
@@ -197,6 +198,10 @@ dependencies {
 
     implementation("com.squareup.okhttp3:logging-interceptor:4.9.3")
     implementation("io.ktor:ktor-client-okhttp:3.0.0")
+
+    //lottie
+    implementation("com.airbnb.android:lottie-compose:6.0.0")
+
 
 
     // Gson

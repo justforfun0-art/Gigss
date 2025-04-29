@@ -62,7 +62,7 @@ fun EmployerDashboardScreen(
     // Load dashboard data and applications
     LaunchedEffect(Unit) {
         dashboardViewModel.loadDashboardData()
-        applicationsViewModel.loadRecentApplications()
+        applicationsViewModel.loadRecentApplications(5)
     }
 
     Scaffold(

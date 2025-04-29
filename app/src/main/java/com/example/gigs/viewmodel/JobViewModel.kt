@@ -95,6 +95,30 @@ class JobViewModel @Inject constructor(
         }
     }
 
+    fun getMyJobs(limit: Int = 10) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                Log.d("JobViewModel", "Loading my jobs with limit: $limit")
+                jobRepository.getMyJobs(limit).collect { result ->
+                    if (result.isSuccess) {
+                        val myJobs = result.getOrNull() ?: emptyList()
+                        Log.d("JobViewModel", "Retrieved ${myJobs.size} jobs")
+                        _jobs.value = myJobs
+                    } else {
+                        Log.e("JobViewModel", "Error: ${result.exceptionOrNull()?.message}")
+                        _jobs.value = emptyList()
+                    }
+                    _isLoading.value = false
+                }
+            } catch (e: Exception) {
+                Log.e("JobViewModel", "Exception: ${e.message}")
+                _isLoading.value = false
+                _jobs.value = emptyList()
+            }
+        }
+    }
+
     // Mark a job as not interested/rejected
     fun markJobAsNotInterested(jobId: String) {
         viewModelScope.launch {

@@ -76,6 +76,20 @@ fun AppNavHost(
     val notificationViewModel: NotificationViewModel = hiltViewModel()
     val unreadCount by notificationViewModel.unreadCount.collectAsState()
 
+    // In AppNavHost.kt
+// Add this as the FIRST LaunchedEffect in the AppNavHost function
+    // In AppNavHost.kt - add a key to ensure recomposition
+    val authStateKey = authState.toString() + System.currentTimeMillis().toString()
+
+    LaunchedEffect(authStateKey) {
+        if (authState is AuthState.Unauthenticated) {
+            navController.navigate(Screen.Welcome.route) {
+                // Clear the entire back stack
+                popUpTo(0) { inclusive = true }
+            }
+        }
+    }
+
     // Load unread notification count
     LaunchedEffect(Unit) {
         notificationViewModel.loadUnreadCount()
