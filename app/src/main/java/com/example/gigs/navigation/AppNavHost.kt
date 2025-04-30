@@ -56,7 +56,11 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import android.widget.Toast
 import com.example.gigs.ui.screens.dashboard.EmployeeDashboardScreen
+import com.example.gigs.ui.screens.jobs.JobHistoryScreen
 import com.example.gigs.ui.screens.notifications.NotificationsScreen
+import androidx.navigation.navArgument
+import com.example.gigs.ui.screens.jobs.JobApplicationDetailsScreen
+import com.example.gigs.ui.screens.jobs.JobHistoryScreen
 
 // Add applications view screen route
 object ApplicationsView : Screen("applications_view")
@@ -76,8 +80,6 @@ fun AppNavHost(
     val notificationViewModel: NotificationViewModel = hiltViewModel()
     val unreadCount by notificationViewModel.unreadCount.collectAsState()
 
-    // In AppNavHost.kt
-// Add this as the FIRST LaunchedEffect in the AppNavHost function
     // In AppNavHost.kt - add a key to ensure recomposition
     val authStateKey = authState.toString() + System.currentTimeMillis().toString()
 
@@ -308,6 +310,17 @@ fun AppNavHost(
             )
         }
 
+        // Job History Screen Route
+        composable(Screen.JobHistory.route) {
+            JobHistoryScreen(
+                onJobSelected = { jobId -> navController.navigate(Screen.JobDetails.createRoute(jobId)) },
+                onApplicationSelected = { applicationId ->
+                    navController.navigate(Screen.JobApplicationDetails.createRoute(applicationId))
+                },
+                onBackPressed = { navController.popBackStack() }
+            )
+        }
+
         // Main app screens
         composable(Screen.EmployeeHome.route) {
             EmployeeHomeScreen(
@@ -328,6 +341,9 @@ fun AppNavHost(
                 },
                 onNavigateToNotifications = {
                     navController.navigate(Screen.Notifications.route)
+                },
+                onNavigateToJobHistory = {
+                    navController.navigate(Screen.JobHistory.route)
                 }
             )
         }
@@ -507,23 +523,34 @@ fun AppNavHost(
                 dashboardViewModel = hiltViewModel(),
                 profileViewModel = hiltViewModel(),
                 onViewAllApplications = {
-                    // Navigate to applications list when implemented
-                    // For now, we'll just show a toast
-                    Toast.makeText(context, "View all applications", Toast.LENGTH_SHORT).show()
+                    navController.navigate(ApplicationsView.route)
+                },
+                onViewApplication = { applicationId ->
+                    navController.navigate(Screen.JobApplicationDetails.createRoute(applicationId))
                 },
                 onViewAllActivities = {
                     // Navigate to activities list when implemented
                     Toast.makeText(context, "View all activities", Toast.LENGTH_SHORT).show()
                 },
-                onNavigateToNotifications = { navController.navigate(Screen.Notifications.route) },
-                onNavigateToMessages = { navController.navigate(Screen.Conversations.route) },
+                onNavigateToNotifications = {
+                    navController.navigate(Screen.Notifications.route)
+                },
+                onNavigateToMessages = {
+                    navController.navigate(Screen.Conversations.route)
+                },
+                onNavigateToJobHistory = {
+                    navController.navigate(Screen.JobHistory.route)
+                },
                 onEditProfile = {
                     // Navigate to edit profile screen when implemented
                     Toast.makeText(context, "Edit profile", Toast.LENGTH_SHORT).show()
                 },
-                onBackPressed = { navController.popBackStack() }
+                onBackPressed = {
+                    navController.popBackStack()
+                }
             )
         }
+
 
         composable(Screen.EmployerDashboard.route) {
             EmployerDashboardScreen(
@@ -550,12 +577,34 @@ fun AppNavHost(
             ApplicationsViewScreen(
                 viewModel = hiltViewModel(),
                 onApplicationSelected = { applicationId ->
-                    // Navigate to application details when implemented
+                    navController.navigate(Screen.JobApplicationDetails.createRoute(applicationId))
                 },
                 onBackPressed = { navController.popBackStack() }
             )
         }
 
+        // Job Application Details Screen Route
+        // Job Application Details Screen Route
+        composable(
+            route = Screen.JobApplicationDetails.route,
+            arguments = listOf(navArgument("applicationId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val applicationId = backStackEntry.arguments?.getString("applicationId") ?: ""
+            JobApplicationDetailsScreen(
+                viewModel = hiltViewModel(),
+                applicationId = applicationId,
+                onBackPressed = { navController.popBackStack() },
+                onMessageEmployer = { employerId ->
+                    // Create a conversation with the employer
+                    navController.navigate(Screen.Conversations.route)
+                },
+                onWriteReview = { jobId, revieweeId, revieweeName ->
+                    navController.navigate(
+                        Screen.CreateReview.createRoute(jobId, revieweeId, revieweeName)
+                    )
+                }
+            )
+        }
         // Admin screens
         composable(Screen.AdminJobApproval.route) {
             AdminJobApprovalScreen(

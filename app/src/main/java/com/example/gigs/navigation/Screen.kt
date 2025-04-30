@@ -44,6 +44,14 @@ sealed class Screen(open val route: String) {
     object EmployeeDashboard : Screen("employee_dashboard")
     object EmployerDashboard : Screen("employer_dashboard")
 
+    // Add Job History Screen
+    object JobHistory : Screen("job_history")
+
+    // Add Job Application Details Screen
+    object JobApplicationDetails : Screen("application_details/{applicationId}") {
+        fun createRoute(applicationId: String): String = "application_details/$applicationId"
+    }
+
     // Admin screens
     object AdminJobApproval : Screen("admin_job_approval")
     object AdminDashboard : Screen("admin_dashboard")

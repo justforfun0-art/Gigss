@@ -3,6 +3,8 @@ package com.example.gigs.ui.screens.dashboard
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -35,9 +37,11 @@ fun EmployeeDashboardScreen(
     dashboardViewModel: EmployeeDashboardViewModel = hiltViewModel(),
     profileViewModel: ProfileViewModel = hiltViewModel(),
     onViewAllApplications: () -> Unit,
+    onViewApplication: (String) -> Unit, // New parameter for specific application navigation
     onViewAllActivities: () -> Unit,
     onNavigateToNotifications: () -> Unit,
     onNavigateToMessages: () -> Unit,
+    onNavigateToJobHistory: () -> Unit, // New parameter for job history navigation
     onEditProfile: () -> Unit,
     onBackPressed: () -> Unit
 ) {
@@ -88,7 +92,8 @@ fun EmployeeDashboardScreen(
                     .fillMaxSize()
                     .padding(paddingValues)
                     .padding(horizontal = 16.dp)
-                    .verticalScroll(scrollState)
+                    .verticalScroll(scrollState),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Profile section
                 ProfileSection(
@@ -151,6 +156,58 @@ fun EmployeeDashboardScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // Job History Card
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    onClick = onNavigateToJobHistory
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.History,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                Text(
+                                    text = "Job History",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            }
+
+                            Icon(
+                                imageVector = Icons.Default.ArrowForward,
+                                contentDescription = "View Job History",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "View your application history, including pending, active, and completed jobs",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 // Recent Applications Section
                 EmployeeSectionHeader(
                     title = "Recent Applications",
@@ -169,7 +226,7 @@ fun EmployeeDashboardScreen(
                     recentApplications.forEach { application ->
                         ApplicationItem(
                             application = application,
-                            onClick = { onViewAllApplications() }
+                            onClick = { onViewApplication(application.id) }
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                     }
@@ -401,11 +458,11 @@ fun EmployeeEmptyStateMessage(
 @Composable
 fun ApplicationItem(
     application: ApplicationWithJob,
-    onClick: () -> Unit
+    onClick: () -> Unit  // This parameter is used to navigate to application details
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        onClick = onClick
+        onClick = onClick   // Make the entire card clickable
     ) {
         Column(
             modifier = Modifier
@@ -429,7 +486,7 @@ fun ApplicationItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                val statusColor = when (application.status) {
+                val statusColor = when (application.status.uppercase()) {
                     "APPLIED" -> MaterialTheme.colorScheme.primary
                     "SHORTLISTED" -> MaterialTheme.colorScheme.tertiary
                     "HIRED" -> MaterialTheme.colorScheme.secondary
@@ -452,6 +509,25 @@ fun ApplicationItem(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+
+            // Add "View Details" button
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onClick) {
+                    Text("View Details")
+                    Icon(
+                        imageVector = Icons.Default.ArrowForward,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(start = 4.dp)
+                            .size(16.dp)
+                    )
+                }
             }
         }
     }
@@ -498,7 +574,7 @@ fun EmployeeActivityItem(
                     )
 
                     Text(
-                        text = activity.title,
+                        text = activity.action,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

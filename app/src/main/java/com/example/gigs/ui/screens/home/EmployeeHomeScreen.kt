@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
@@ -70,7 +71,8 @@ fun EmployeeHomeScreen(
     onNavigateToDashboard: () -> Unit,
     onNavigateToJobListing: (String) -> Unit,
     onNavigateToMessages: () -> Unit = {}, // Optional with default
-    onNavigateToNotifications: () -> Unit = {} // Optional with default
+    onNavigateToNotifications: () -> Unit = {}, // Optional with default
+    onNavigateToJobHistory: () -> Unit = {} // Added parameter for job history navigation
 ) {
     var selectedTab by remember { mutableStateOf(0) }
     val profileViewModel: ProfileViewModel = hiltViewModel()
@@ -89,6 +91,14 @@ fun EmployeeHomeScreen(
             TopAppBar(
                 title = { Text("GigWork") },
                 actions = {
+                    // History button in top app bar
+                    IconButton(onClick = onNavigateToJobHistory) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = "Job History"
+                        )
+                    }
+
                     IconButton(onClick = {
                         authViewModel.signOut()
                         onSignOut()
@@ -147,6 +157,22 @@ fun EmployeeHomeScreen(
                     },
                     label = { Text("Profile") }
                 )
+
+                // Add History tab to bottom navigation
+                NavigationBarItem(
+                    selected = selectedTab == 3,
+                    onClick = {
+                        selectedTab = 3
+                        onNavigateToJobHistory()
+                    },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = "Job History"
+                        )
+                    },
+                    label = { Text("History") }
+                )
             }
         }
     ) { paddingValues ->
@@ -154,7 +180,8 @@ fun EmployeeHomeScreen(
             0 -> EmployeeHomeTab(
                 modifier = Modifier.padding(paddingValues),
                 jobViewModel = jobViewModel,
-                onJobDetails = { jobId -> onNavigateToJobListing(jobId) }
+                onJobDetails = { jobId -> onNavigateToJobListing(jobId) },
+                onViewJobHistory = onNavigateToJobHistory  // Pass job history navigation
             )
             1 -> EmployeeJobsTab(
                 modifier = Modifier.padding(paddingValues),
@@ -165,14 +192,33 @@ fun EmployeeHomeScreen(
                 modifier = Modifier.padding(paddingValues),
                 profile = employeeProfile
             )
+            3 -> {
+                // You could handle in-page content, but we're navigating away
+                // So this is just a placeholder in case tab state is 3 but navigation hasn't happened yet
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+
+                // Trigger navigation to job history
+                LaunchedEffect(Unit) {
+                    onNavigateToJobHistory()
+                }
+            }
         }
     }
 }
+
 @Composable
 fun EmployeeHomeTab(
     modifier: Modifier = Modifier,
     jobViewModel: JobViewModel,
-    onJobDetails: (String) -> Unit
+    onJobDetails: (String) -> Unit,
+    onViewJobHistory: () -> Unit  // Added parameter
 ) {
     val featuredJobs by jobViewModel.featuredJobs.collectAsState()
     val isLoading by jobViewModel.isLoading.collectAsState()
@@ -215,7 +261,22 @@ fun EmployeeHomeTab(
                 text = "Find local jobs that match your skills and availability"
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Add Job History Button
+            Button(
+                onClick = onViewJobHistory,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.History,
+                    contentDescription = "History",
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Text("View Your Job History")
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Featured Jobs with Tinder-style swiping
             Text(
