@@ -218,12 +218,13 @@ fun EmployeeHomeTab(
     modifier: Modifier = Modifier,
     jobViewModel: JobViewModel,
     onJobDetails: (String) -> Unit,
-    onViewJobHistory: () -> Unit  // Added parameter
+    onViewJobHistory: () -> Unit
 ) {
     val featuredJobs by jobViewModel.featuredJobs.collectAsState()
     val isLoading by jobViewModel.isLoading.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val employeeProfile by jobViewModel.employeeProfile.collectAsState()
 
     // Create JobWithEmployer list by mapping the featuredJobs
     val jobsWithEmployers = remember(featuredJobs) {
@@ -239,9 +240,26 @@ fun EmployeeHomeTab(
         }
     }
 
-    // Load featured jobs
+    // Load featured jobs and employee profile
     LaunchedEffect(Unit) {
-        jobViewModel.getFeaturedJobs(10) // Get 10 featured jobs for better swiping experience
+        // First, load the employee profile to get their district
+        jobViewModel.getEmployeeProfile()
+    }
+
+    // When the employee profile changes, load jobs for their district
+    LaunchedEffect(employeeProfile) {
+        if (employeeProfile != null) {
+            val employeeDistrict = employeeProfile?.district ?: ""
+            if (employeeDistrict.isNotEmpty()) {
+                jobViewModel.getLocalizedFeaturedJobs(employeeDistrict, 10)
+            } else {
+                // Fallback to getting general featured jobs if no district is set
+                jobViewModel.getFeaturedJobs(10)
+            }
+        } else {
+            // If profile isn't loaded yet, get general featured jobs
+            jobViewModel.getFeaturedJobs(10)
+        }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -280,7 +298,7 @@ fun EmployeeHomeTab(
 
             // Featured Jobs with Tinder-style swiping
             Text(
-                text = "Featured Jobs",
+                text = employeeProfile?.let { "Jobs in ${it.district}" } ?: "Featured Jobs",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.align(Alignment.Start)
             )
@@ -303,7 +321,7 @@ fun EmployeeHomeTab(
                 )
             } else if (featuredJobs.isEmpty()) {
                 Text(
-                    text = "No featured jobs available at the moment.",
+                    text = "No jobs available in your area at the moment.",
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center
                 )

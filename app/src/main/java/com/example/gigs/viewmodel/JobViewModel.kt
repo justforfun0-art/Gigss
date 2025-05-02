@@ -3,11 +3,14 @@ package com.example.gigs.viewmodel
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.gigs.data.model.EmployeeProfile
 import com.example.gigs.data.model.EmployerProfile
 import com.example.gigs.data.model.Job
 import com.example.gigs.data.repository.ApplicationRepository
+import com.example.gigs.data.repository.AuthRepository
 import com.example.gigs.data.repository.EmployerProfileRepository
 import com.example.gigs.data.repository.JobRepository
+import com.example.gigs.data.repository.ProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,8 +21,13 @@ import javax.inject.Inject
 class JobViewModel @Inject constructor(
     private val jobRepository: JobRepository,
     private val employerProfileRepository: EmployerProfileRepository,
-    private val applicationRepository: ApplicationRepository
+    private val applicationRepository: ApplicationRepository,
+    private val profileRepository: ProfileRepository,
+    private val authRepository: AuthRepository,
+    private val processedJobsViewModel: ProcessedJobsViewModel // Added ProcessedJobsViewModel
 ) : ViewModel() {
+
+    private val TAG = "JobViewModel"
 
     private val _jobs = MutableStateFlow<List<Job>>(emptyList())
     val jobs: StateFlow<List<Job>> = _jobs
@@ -50,6 +58,9 @@ class JobViewModel @Inject constructor(
     private val _applicationStatus = MutableStateFlow<ApplicationStatus>(ApplicationStatus.IDLE)
     val applicationStatus: StateFlow<ApplicationStatus> = _applicationStatus
 
+    private val _employeeProfile = MutableStateFlow<EmployeeProfile?>(null)
+    val employeeProfile: StateFlow<EmployeeProfile?> = _employeeProfile
+
     // Load the user's applications when the ViewModel is created
     init {
         loadUserApplications()
@@ -65,11 +76,14 @@ class JobViewModel @Inject constructor(
                         val applications = result.getOrNull() ?: emptyList()
                         val jobIds = applications.map { it.jobId }.toSet()
                         _appliedJobIds.value = jobIds
-                        Log.d("JobViewModel", "Loaded ${jobIds.size} applied job IDs")
+                        Log.d(TAG, "Loaded ${jobIds.size} applied job IDs")
+
+                        // Sync with ProcessedJobsViewModel
+                        processedJobsViewModel.addProcessedJobs(jobIds)
                     }
                 }
             } catch (e: Exception) {
-                Log.e("JobViewModel", "Error loading user applications: ${e.message}")
+                Log.e(TAG, "Error loading user applications: ${e.message}")
             }
         }
     }
@@ -84,11 +98,14 @@ class JobViewModel @Inject constructor(
                     if (result.isSuccess) {
                         val jobIds = result.getOrNull() ?: emptySet()
                         _rejectedJobIds.value = jobIds
-                        Log.d("JobViewModel", "Loaded ${jobIds.size} rejected job IDs")
+                        Log.d(TAG, "Loaded ${jobIds.size} rejected job IDs")
+
+                        // Sync with ProcessedJobsViewModel
+                        processedJobsViewModel.addProcessedJobs(jobIds)
                     }
                 }
             } catch (e: Exception) {
-                Log.e("JobViewModel", "Error loading rejected jobs: ${e.message}")
+                Log.e(TAG, "Error loading rejected jobs: ${e.message}")
                 // If there's an error, just use an empty set
                 _rejectedJobIds.value = emptySet()
             }
@@ -99,20 +116,20 @@ class JobViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                Log.d("JobViewModel", "Loading my jobs with limit: $limit")
+                Log.d(TAG, "Loading my jobs with limit: $limit")
                 jobRepository.getMyJobs(limit).collect { result ->
                     if (result.isSuccess) {
                         val myJobs = result.getOrNull() ?: emptyList()
-                        Log.d("JobViewModel", "Retrieved ${myJobs.size} jobs")
+                        Log.d(TAG, "Retrieved ${myJobs.size} jobs")
                         _jobs.value = myJobs
                     } else {
-                        Log.e("JobViewModel", "Error: ${result.exceptionOrNull()?.message}")
+                        Log.e(TAG, "Error: ${result.exceptionOrNull()?.message}")
                         _jobs.value = emptyList()
                     }
                     _isLoading.value = false
                 }
             } catch (e: Exception) {
-                Log.e("JobViewModel", "Exception: ${e.message}")
+                Log.e(TAG, "Exception: ${e.message}")
                 _isLoading.value = false
                 _jobs.value = emptyList()
             }
@@ -128,19 +145,89 @@ class JobViewModel @Inject constructor(
                 updatedRejectedJobs.add(jobId)
                 _rejectedJobIds.value = updatedRejectedJobs
 
+                // Add to ProcessedJobsViewModel for persistent tracking
+                processedJobsViewModel.addProcessedJob(jobId)
+
                 // Save to repository if implemented
                 jobRepository.markJobAsNotInterested(jobId).collect { result ->
                     if (result.isSuccess) {
-                        Log.d("JobViewModel", "Successfully marked job as not interested: $jobId")
+                        Log.d(TAG, "Successfully marked job as not interested: $jobId")
+
+                        // Get the employee's district for refreshing
+                        val district = _employeeProfile.value?.district
+
+                        // Refresh featured jobs to remove the rejected one
+                        if (!district.isNullOrBlank()) {
+                            // If we have a district, get localized jobs
+                            getLocalizedFeaturedJobs(district, _featuredJobs.value.size + 1)
+                        } else {
+                            // Otherwise use regular featured jobs
+                            refreshFeaturedJobs()
+                        }
                     } else {
-                        Log.e("JobViewModel", "Error marking job as not interested: ${result.exceptionOrNull()?.message}")
+                        Log.e(TAG, "Error marking job as not interested: ${result.exceptionOrNull()?.message}")
                     }
                 }
-
-                // Refresh featured jobs to remove the rejected one
-                refreshFeaturedJobs()
             } catch (e: Exception) {
-                Log.e("JobViewModel", "Exception marking job as not interested: ${e.message}", e)
+                Log.e(TAG, "Exception marking job as not interested: ${e.message}", e)
+            }
+        }
+    }
+
+    // Load employee profile
+    fun getEmployeeProfile() {
+        viewModelScope.launch {
+            val userId = authRepository.getCurrentUserId() ?: return@launch
+            try {
+                // Use the proper repository to get employee profile
+                profileRepository.getEmployeeProfileByUserId(userId).collect { result ->
+                    if (result.isSuccess) {
+                        _employeeProfile.value = result.getOrNull()
+                        Log.d(TAG, "Loaded employee profile: ${_employeeProfile.value?.district}")
+                    } else {
+                        Log.e(TAG, "Error loading employee profile: ${result.exceptionOrNull()?.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception loading employee profile: ${e.message}")
+            }
+        }
+    }
+
+    // Get featured jobs filtered by district
+    fun getLocalizedFeaturedJobs(district: String, limit: Int = 5) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                Log.d(TAG, "Getting localized featured jobs for district: $district")
+                jobRepository.getJobsByLocation(district).collect { result ->
+                    if (result.isSuccess) {
+                        val allJobs = result.getOrNull() ?: emptyList()
+                        Log.d(TAG, "Retrieved ${allJobs.size} jobs for district $district")
+
+                        // Get combined processed jobs from the ViewModel instead of separate sets
+                        val processedJobs = processedJobsViewModel.getProcessedJobIds()
+
+                        // Filter out jobs the user has already interacted with
+                        val filteredJobs = allJobs.filter { job ->
+                            !processedJobs.contains(job.id)
+                        }
+
+                        // Take only the requested limit
+                        _featuredJobs.value = filteredJobs.take(limit)
+                        Log.d(TAG, "Filtered to ${_featuredJobs.value.size} featured jobs")
+                    } else {
+                        Log.e(TAG, "Error: ${result.exceptionOrNull()?.message}")
+                        // If there's an error getting localized jobs, fallback to regular featured jobs
+                        getFeaturedJobs(limit)
+                    }
+                    _isLoading.value = false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception: ${e.message}")
+                _isLoading.value = false
+                // If there's an exception, fallback to regular featured jobs
+                getFeaturedJobs(limit)
             }
         }
     }
@@ -155,16 +242,24 @@ class JobViewModel @Inject constructor(
         return _rejectedJobIds.value.contains(jobId)
     }
 
+    // Helper function to check if job has been processed (applied or rejected)
+    fun isJobProcessed(jobId: String): Boolean {
+        return processedJobsViewModel.isJobProcessed(jobId)
+    }
+
     // Apply for a job with Tinder-like swiping
     fun applyForJob(jobId: String) {
         viewModelScope.launch {
             _isLoading.value = true
 
             try {
-                Log.d("JobViewModel", "Applying for job: $jobId")
+                // Mark the job as processed immediately in the persistent ViewModel
+                processedJobsViewModel.addProcessedJob(jobId)
+
+                Log.d(TAG, "Applying for job: $jobId")
                 applicationRepository.applyForJob(jobId).collect { result ->
                     if (result.isSuccess) {
-                        Log.d("JobViewModel", "Successfully applied for job: $jobId")
+                        Log.d(TAG, "Successfully applied for job: $jobId")
 
                         // Update local state to reflect the user has applied
                         _hasApplied.value = true
@@ -176,11 +271,20 @@ class JobViewModel @Inject constructor(
 
                         _applicationStatus.value = ApplicationStatus.SUCCESS
 
+                        // Get the employee's district for refreshing
+                        val district = _employeeProfile.value?.district
+
                         // Refresh featured jobs to remove the applied one
-                        refreshFeaturedJobs()
+                        if (!district.isNullOrBlank()) {
+                            // If we have a district, get localized jobs
+                            getLocalizedFeaturedJobs(district, _featuredJobs.value.size + 1)
+                        } else {
+                            // Otherwise use regular featured jobs
+                            refreshFeaturedJobs()
+                        }
                     } else {
                         val errorMessage = result.exceptionOrNull()?.message ?: "Unknown error"
-                        Log.e("JobViewModel", "Error applying for job: $errorMessage")
+                        Log.e(TAG, "Error applying for job: $errorMessage")
 
                         // If the error is that the user already applied, update the UI state
                         if (errorMessage.contains("already applied")) {
@@ -197,7 +301,7 @@ class JobViewModel @Inject constructor(
                     _isLoading.value = false
                 }
             } catch (e: Exception) {
-                Log.e("JobViewModel", "Exception applying for job: ${e.message}", e)
+                Log.e(TAG, "Exception applying for job: ${e.message}", e)
                 _applicationStatus.value = ApplicationStatus.ERROR(e.message ?: "Unknown error")
                 _isLoading.value = false
             }
@@ -223,7 +327,7 @@ class JobViewModel @Inject constructor(
         getFeaturedJobs(currentLimit)
     }
 
-    // Get featured jobs and filter out applied/rejected jobs
+    // Get featured jobs and filter out processed jobs
     fun getFeaturedJobs(limit: Int = 5) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -232,23 +336,25 @@ class JobViewModel @Inject constructor(
                     if (result.isSuccess) {
                         val allJobs = result.getOrNull() ?: emptyList()
 
+                        // Get all processed jobs from the centralized ViewModel
+                        val processedJobs = processedJobsViewModel.getProcessedJobIds()
+
                         // Filter out jobs the user has already interacted with
                         val filteredJobs = allJobs.filter { job ->
-                            !_appliedJobIds.value.contains(job.id) &&
-                                    !_rejectedJobIds.value.contains(job.id)
+                            !processedJobs.contains(job.id)
                         }
 
                         // Take only the requested limit
                         _featuredJobs.value = filteredJobs.take(limit)
 
-                        Log.d("JobViewModel", "Loaded ${_featuredJobs.value.size} featured jobs after filtering")
+                        Log.d(TAG, "Loaded ${_featuredJobs.value.size} featured jobs after filtering")
                     }
                     _isLoading.value = false
                 }
             } catch (e: Exception) {
                 _isLoading.value = false
                 _featuredJobs.value = emptyList()
-                Log.e("JobViewModel", "Error loading featured jobs: ${e.message}")
+                Log.e(TAG, "Error loading featured jobs: ${e.message}")
             }
         }
     }
@@ -302,6 +408,9 @@ class JobViewModel @Inject constructor(
                     val updatedAppliedJobs = _appliedJobIds.value.toMutableSet()
                     updatedAppliedJobs.add(jobId)
                     _appliedJobIds.value = updatedAppliedJobs
+
+                    // Also update the ProcessedJobsViewModel
+                    processedJobsViewModel.addProcessedJob(jobId)
                 }
             }
         }
@@ -311,26 +420,29 @@ class JobViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                Log.d("JobViewModel", "Getting jobs for district: $district")
+                Log.d(TAG, "Getting jobs for district: $district")
                 jobRepository.getJobsByLocation(district).collect { result ->
                     if (result.isSuccess) {
                         val allJobs = result.getOrNull() ?: emptyList()
-                        Log.d("JobViewModel", "Retrieved ${allJobs.size} jobs for district $district")
+                        Log.d(TAG, "Retrieved ${allJobs.size} jobs for district $district")
 
-                        // Filter out jobs the user has already interacted with
+                        // Get processed jobs from the centralized ViewModel
+                        val processedJobs = processedJobsViewModel.getProcessedJobIds()
+
+                        // Filter out processed jobs
                         val filteredJobs = allJobs.filter { job ->
-                            !_rejectedJobIds.value.contains(job.id)
+                            !processedJobs.contains(job.id)
                         }
 
                         _jobs.value = filteredJobs
                     } else {
-                        Log.e("JobViewModel", "Error: ${result.exceptionOrNull()?.message}")
+                        Log.e(TAG, "Error: ${result.exceptionOrNull()?.message}")
                         _jobs.value = emptyList()
                     }
                     _isLoading.value = false
                 }
             } catch (e: Exception) {
-                Log.e("JobViewModel", "Exception: ${e.message}")
+                Log.e(TAG, "Exception: ${e.message}")
                 _isLoading.value = false
                 _jobs.value = emptyList()
             }

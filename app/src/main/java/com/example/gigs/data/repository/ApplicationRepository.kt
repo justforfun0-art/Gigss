@@ -216,23 +216,22 @@ class ApplicationRepository @Inject constructor(
                 return@flow
             }
 
-            // Create application using a simpler approach
+            // Create application using proper JsonObject
             Log.d(TAG, "Creating application for job: $jobId")
             val timestamp = java.time.Instant.now().toString()
 
-            // Use executeStatement instead of trying to decode the response
+            // Create a proper JsonObject to insert
+            val applicationData = buildJsonObject {
+                put("job_id", jobId)
+                put("employee_id", userId)
+                put("status", "APPLIED")
+                put("applied_at", timestamp)
+            }
+
+            // Insert using the JsonObject
             supabaseClient
                 .table("applications")
-                .insert(
-                    """
-                {
-                  "job_id": "$jobId",
-                  "employee_id": "$userId",
-                  "status": "APPLIED",
-                  "applied_at": "$timestamp"
-                }
-                """
-                ) {
+                .insert(applicationData) {
                     headers["Prefer"] = "return=minimal"
                 }
 
