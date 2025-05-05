@@ -7,6 +7,7 @@ import com.example.gigs.data.remote.FirebaseAuthManager
 import com.example.gigs.data.remote.SupabaseClient
 import com.example.gigs.data.repository.AuthRepository
 import com.example.gigs.data.repository.ProfileRepository
+import com.example.gigs.viewmodel.ProcessedJobsRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -46,5 +47,11 @@ object AppModule {
         supabaseClient: SupabaseClient
     ): ProfileRepository {
         return ProfileRepository(firebaseAuthManager, supabaseClient)
+    }
+
+    @Provides
+    @Singleton
+    fun provideProcessedJobsRepository(): ProcessedJobsRepository {
+        return ProcessedJobsRepository()
     }
 }

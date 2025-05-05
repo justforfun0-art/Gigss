@@ -24,7 +24,7 @@ class JobViewModel @Inject constructor(
     private val applicationRepository: ApplicationRepository,
     private val profileRepository: ProfileRepository,
     private val authRepository: AuthRepository,
-    private val processedJobsViewModel: ProcessedJobsViewModel // Added ProcessedJobsViewModel
+    private val processedJobsRepository: ProcessedJobsRepository // Now inject the repository instead of ViewModel
 ) : ViewModel() {
 
     private val TAG = "JobViewModel"
@@ -79,7 +79,7 @@ class JobViewModel @Inject constructor(
                         Log.d(TAG, "Loaded ${jobIds.size} applied job IDs")
 
                         // Sync with ProcessedJobsViewModel
-                        processedJobsViewModel.addProcessedJobs(jobIds)
+                        processedJobsRepository.addProcessedJobs(jobIds)
                     }
                 }
             } catch (e: Exception) {
@@ -101,7 +101,7 @@ class JobViewModel @Inject constructor(
                         Log.d(TAG, "Loaded ${jobIds.size} rejected job IDs")
 
                         // Sync with ProcessedJobsViewModel
-                        processedJobsViewModel.addProcessedJobs(jobIds)
+                        processedJobsRepository.addProcessedJobs(jobIds)
                     }
                 }
             } catch (e: Exception) {
@@ -146,7 +146,7 @@ class JobViewModel @Inject constructor(
                 _rejectedJobIds.value = updatedRejectedJobs
 
                 // Add to ProcessedJobsViewModel for persistent tracking
-                processedJobsViewModel.addProcessedJob(jobId)
+                processedJobsRepository.addProcessedJob(jobId)
 
                 // Save to repository if implemented
                 jobRepository.markJobAsNotInterested(jobId).collect { result ->
@@ -206,7 +206,7 @@ class JobViewModel @Inject constructor(
                         Log.d(TAG, "Retrieved ${allJobs.size} jobs for district $district")
 
                         // Get combined processed jobs from the ViewModel instead of separate sets
-                        val processedJobs = processedJobsViewModel.getProcessedJobIds()
+                        val processedJobs = processedJobsRepository.getProcessedJobIds()
 
                         // Filter out jobs the user has already interacted with
                         val filteredJobs = allJobs.filter { job ->
@@ -244,7 +244,7 @@ class JobViewModel @Inject constructor(
 
     // Helper function to check if job has been processed (applied or rejected)
     fun isJobProcessed(jobId: String): Boolean {
-        return processedJobsViewModel.isJobProcessed(jobId)
+        return processedJobsRepository.isJobProcessed(jobId)
     }
 
     // Apply for a job with Tinder-like swiping
@@ -254,7 +254,7 @@ class JobViewModel @Inject constructor(
 
             try {
                 // Mark the job as processed immediately in the persistent ViewModel
-                processedJobsViewModel.addProcessedJob(jobId)
+                processedJobsRepository.addProcessedJob(jobId)
 
                 Log.d(TAG, "Applying for job: $jobId")
                 applicationRepository.applyForJob(jobId).collect { result ->
@@ -337,7 +337,7 @@ class JobViewModel @Inject constructor(
                         val allJobs = result.getOrNull() ?: emptyList()
 
                         // Get all processed jobs from the centralized ViewModel
-                        val processedJobs = processedJobsViewModel.getProcessedJobIds()
+                        val processedJobs = processedJobsRepository.getProcessedJobIds()
 
                         // Filter out jobs the user has already interacted with
                         val filteredJobs = allJobs.filter { job ->
@@ -410,7 +410,7 @@ class JobViewModel @Inject constructor(
                     _appliedJobIds.value = updatedAppliedJobs
 
                     // Also update the ProcessedJobsViewModel
-                    processedJobsViewModel.addProcessedJob(jobId)
+                    processedJobsRepository.addProcessedJob(jobId)
                 }
             }
         }
@@ -427,7 +427,7 @@ class JobViewModel @Inject constructor(
                         Log.d(TAG, "Retrieved ${allJobs.size} jobs for district $district")
 
                         // Get processed jobs from the centralized ViewModel
-                        val processedJobs = processedJobsViewModel.getProcessedJobIds()
+                        val processedJobs = processedJobsRepository.getProcessedJobIds()
 
                         // Filter out processed jobs
                         val filteredJobs = allJobs.filter { job ->
