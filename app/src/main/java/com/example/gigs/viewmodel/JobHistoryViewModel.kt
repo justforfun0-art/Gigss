@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import java.util.Locale
 
 @HiltViewModel
 class JobHistoryViewModel @Inject constructor(
@@ -46,15 +47,16 @@ class JobHistoryViewModel @Inject constructor(
 
                         // Filter applications by status
                         _activeApplications.value = applications.filter {
-                            it.status.uppercase() in listOf("APPLIED", "SHORTLISTED")
+                            val status = it.status.toString().lowercase(Locale.ROOT) // Convert to String explicitly
+                            status == "applied" || status == "shortlisted"
                         }.sortedByDescending { it.appliedAt }
 
                         _completedApplications.value = applications.filter {
-                            it.status.uppercase() == "HIRED"
+                            it.status.toString().lowercase(Locale.ROOT) == "hired"
                         }.sortedByDescending { it.appliedAt }
 
                         _rejectedApplications.value = applications.filter {
-                            it.status.uppercase() == "REJECTED"
+                            it.status.toString().lowercase(Locale.ROOT) == "rejected"
                         }.sortedByDescending { it.appliedAt }
 
                         Log.d("JobHistoryViewModel", "Loaded ${applications.size} applications")

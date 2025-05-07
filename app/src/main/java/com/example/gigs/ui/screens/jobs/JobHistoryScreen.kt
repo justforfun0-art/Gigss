@@ -275,7 +275,7 @@ fun JobHistoryItem(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Status chip
-                val (statusColor, statusIcon) = when (application.status.uppercase()) {
+                val (statusColor, statusIcon) = when (application.status.toString().uppercase()) {
                     "APPLIED" -> Pair(PrimaryBlue, null)
                     "SHORTLISTED" -> Pair(MaterialTheme.colorScheme.tertiary, null)
                     "HIRED" -> Pair(MaterialTheme.colorScheme.secondary, Icons.Default.Check)
@@ -288,7 +288,7 @@ fun JobHistoryItem(
                     onClick = { /* No action needed */ },
                     label = {
                         Text(
-                            text = application.status.uppercase(),
+                            text = application.status.toString().uppercase(),
                             style = MaterialTheme.typography.labelMedium
                         )
                     },

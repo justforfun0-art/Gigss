@@ -14,12 +14,15 @@ import javax.inject.Inject
 class DashboardRepository @Inject constructor(
     private val supabaseClient: SupabaseClient,
     private val authRepository: AuthRepository,
-    private val profileRepository: ProfileRepository
+    private val profileRepository: ProfileRepository,
+    private val jobRepository: JobRepository,
+    private val applicationRepository: ApplicationRepository
 ) {
     suspend fun getEmployeeDashboardData(): Flow<Result<EmployeeDashboardData>> = flow {
         try {
             val userId = authRepository.getCurrentUserId() ?: throw Exception("User not authenticated")
 
+            // Try to get from employer_dashboard table first
             val result = supabaseClient
                 .table("employee_dashboard")
                 .select {
@@ -29,7 +32,33 @@ class DashboardRepository @Inject constructor(
                 }
                 .decodeSingleOrNull<EmployeeDashboardData>()
 
-            emit(Result.success(result ?: EmployeeDashboardData(userId)))
+            if (result != null) {
+                emit(Result.success(result))
+            } else {
+                // If not found in table, calculate real-time stats
+                val applications = applicationRepository.getMyApplications(0).collect { appResult ->
+                    if (appResult.isSuccess) {
+                        val apps = appResult.getOrNull() ?: emptyList()
+
+                        val totalApplications = apps.size
+                        val hiredCount = apps.count {
+                            it.status?.name.equals("hired", true) // Using enum's name property
+                        }
+                        val rejectedCount = apps.count {
+                            it.status?.name.equals("rejected", true)
+                        }
+
+                        emit(Result.success(EmployeeDashboardData(
+                            userId = userId,
+                            totalApplications = totalApplications,
+                            hiredCount = hiredCount,
+                            rejectedCount = rejectedCount
+                        )))
+                    } else {
+                        emit(Result.success(EmployeeDashboardData(userId)))
+                    }
+                }
+            }
         } catch (e: Exception) {
             emit(Result.failure(e))
         }
@@ -39,16 +68,56 @@ class DashboardRepository @Inject constructor(
         try {
             val userId = authRepository.getCurrentUserId() ?: throw Exception("User not authenticated")
 
-            val result = supabaseClient
-                .table("employer_dashboard")
-                .select {
-                    filter {
-                        eq("user_id", userId)
-                    }
-                }
-                .decodeSingleOrNull<EmployerDashboardData>()
+            // First try to compute real-time stats
+            var totalJobs = 0
+            var activeJobs = 0
+            var totalApplicationsReceived = 0
+            var averageRating = 0.0f
 
-            emit(Result.success(result ?: EmployerDashboardData(userId)))
+            // Get job stats
+            jobRepository.getMyJobs(0).collect { jobsResult ->
+                if (jobsResult.isSuccess) {
+                    val jobs = jobsResult.getOrNull() ?: emptyList()
+                    totalJobs = jobs.size
+                    activeJobs = jobs.count {
+                        it.status?.name.equals("APPROVED", true)  // Using enum's name property
+                    }
+                    // Get application stats for all jobs
+                    var allApplicationsCount = 0
+                    for (job in jobs) {
+                        applicationRepository.getApplicationsForJob(job.id).collect { appResult ->
+                            if (appResult.isSuccess) {
+                                val applications = appResult.getOrNull() ?: emptyList()
+                                allApplicationsCount += applications.size
+                            }
+                        }
+                    }
+                    totalApplicationsReceived = allApplicationsCount
+
+                    // Create or update dashboard data
+                    val dashboardData = EmployerDashboardData(
+                        userId = userId,
+                        totalJobs = totalJobs,
+                        activeJobs = activeJobs,
+                        totalApplicationsReceived = totalApplicationsReceived,
+                        averageRating = averageRating
+                    )
+
+                    emit(Result.success(dashboardData))
+                } else {
+                    // If we can't get jobs, try from database table
+                    val result = supabaseClient
+                        .table("employer_dashboard")
+                        .select {
+                            filter {
+                                eq("user_id", userId)
+                            }
+                        }
+                        .decodeSingleOrNull<EmployerDashboardData>()
+
+                    emit(Result.success(result ?: EmployerDashboardData(userId)))
+                }
+            }
         } catch (e: Exception) {
             emit(Result.failure(e))
         }

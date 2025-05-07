@@ -59,8 +59,13 @@ import com.example.gigs.ui.screens.dashboard.EmployeeDashboardScreen
 import com.example.gigs.ui.screens.jobs.JobHistoryScreen
 import com.example.gigs.ui.screens.notifications.NotificationsScreen
 import androidx.navigation.navArgument
+import com.example.gigs.ui.screens.jobs.AllApplicationsScreen
+import com.example.gigs.ui.screens.jobs.EmployerJobDetailsScreen
 import com.example.gigs.ui.screens.jobs.JobApplicationDetailsScreen
+import com.example.gigs.ui.screens.jobs.JobApplicationsScreen
 import com.example.gigs.ui.screens.jobs.JobHistoryScreen
+import com.example.gigs.ui.screens.profile.ApplicantProfileScreen
+import com.example.gigs.ui.screens.profile.EditEmployerProfileScreen
 
 // Add applications view screen route
 object ApplicationsView : Screen("applications_view")
@@ -348,9 +353,87 @@ fun AppNavHost(
             )
         }
 
+        composable(
+            route = Screen.EmployerJobDetails.route,
+            arguments = listOf(navArgument("jobId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val jobId = backStackEntry.arguments?.getString("jobId") ?: ""
+            EmployerJobDetailsScreen(
+                jobViewModel = hiltViewModel(),
+                jobId = jobId,
+                onBackPressed = { navController.popBackStack() },
+                onEditJob = { /* Navigate to edit job screen when implemented */ },
+                onViewApplications = { id, title ->
+                    navController.navigate(Screen.JobApplications.createRoute(id, title))
+                }
+            )
+        }
+
+        composable(Screen.EditEmployerProfile.route) {
+            EditEmployerProfileScreen(
+                profileViewModel = hiltViewModel(),
+                onProfileUpdated = {
+                    navController.navigate(Screen.EmployerHome.route) {
+                        popUpTo(Screen.EmployerHome.route) { inclusive = true }
+                    }
+                },
+                onBackPressed = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Screen.ApplicantProfile.route,
+            arguments = listOf(navArgument("applicantId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val applicantId = backStackEntry.arguments?.getString("applicantId") ?: ""
+
+            ApplicantProfileScreen(
+                viewModel = hiltViewModel(),
+                applicantId = applicantId,
+                onBackPressed = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Screen.JobApplications.route,
+            arguments = listOf(
+                navArgument("jobId") { type = NavType.StringType },
+                navArgument("jobTitle") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val jobId = backStackEntry.arguments?.getString("jobId") ?: ""
+            val jobTitle = backStackEntry.arguments?.getString("jobTitle")?.replace("-", "/") ?: ""
+
+            JobApplicationsScreen(
+                viewModel = hiltViewModel(),
+                jobId = jobId,
+                jobTitle = jobTitle,
+                onBackPressed = { navController.popBackStack() },
+                onViewApplicantProfile = { applicantId ->
+                    navController.navigate(Screen.ApplicantProfile.createRoute(applicantId))
+                }
+            )
+        }
+
+        composable(Screen.AllApplications.route) {
+            AllApplicationsScreen(
+                viewModel = hiltViewModel(),
+                onBackPressed = { navController.popBackStack() },
+                onViewApplicantProfile = { applicantId ->
+                    navController.navigate(Screen.ApplicantProfile.createRoute(applicantId))
+                },
+                onViewJob = { jobId ->
+                    navController.navigate(Screen.EmployerJobDetails.createRoute(jobId))
+                }
+            )
+        }
+
+
+        // Update the EmployerHomeScreen call in the existing route
         composable(Screen.EmployerHome.route) {
             EmployerHomeScreen(
                 authViewModel = authViewModel,
+                dashboardViewModel = hiltViewModel(),
                 onSignOut = {
                     // Navigate to welcome screen
                     navController.navigate(Screen.Welcome.route) {
@@ -365,6 +448,15 @@ fun AppNavHost(
                 },
                 onNavigateToAdminDashboard = {
                     navController.navigate(Screen.AdminDashboard.route)
+                },
+                onNavigateToJobDetails = { jobId ->
+                    navController.navigate(Screen.EmployerJobDetails.createRoute(jobId))
+                },
+                onNavigateToEditProfile = {
+                    navController.navigate(Screen.EditEmployerProfile.route)
+                },
+                onViewAllApplications = {
+                    navController.navigate(Screen.AllApplications.route)
                 }
             )
         }

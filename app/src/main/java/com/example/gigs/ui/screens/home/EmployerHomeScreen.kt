@@ -1,33 +1,50 @@
 package com.example.gigs.ui.screens.home
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.gigs.data.model.Job
+import com.example.gigs.data.model.JobStatus
 import com.example.gigs.navigation.AdminButton
 import com.example.gigs.ui.components.GigWorkHeaderText
 import com.example.gigs.ui.components.GigWorkSubtitleText
 import com.example.gigs.ui.screens.dashboard.JobItem
 import com.example.gigs.viewmodel.AuthViewModel
+import com.example.gigs.viewmodel.EmployerDashboardViewModel
 import com.example.gigs.viewmodel.JobViewModel
 import com.example.gigs.viewmodel.ProfileViewModel
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmployerHomeScreen(
     authViewModel: AuthViewModel,
+    dashboardViewModel: EmployerDashboardViewModel = hiltViewModel(),
     onSignOut: () -> Unit,
     onNavigateToDashboard: () -> Unit,
     onNavigateToCreateJob: () -> Unit,
-    onNavigateToAdminDashboard: () -> Unit
+    onNavigateToAdminDashboard: () -> Unit,
+    onNavigateToJobDetails: (String) -> Unit,
+    onNavigateToEditProfile: () -> Unit,
+    onViewAllApplications: () -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(0) }
     val jobViewModel: JobViewModel = hiltViewModel()
@@ -36,7 +53,13 @@ fun EmployerHomeScreen(
     // Load employer profile when the screen launches
     LaunchedEffect(Unit) {
         profileViewModel.getEmployerProfile()
+        // Load recent jobs for the Jobs tab
+        jobViewModel.getMyJobs(30) // increase the limit to get more jobs
     }
+
+    val employerProfile by profileViewModel.employerProfile.collectAsState()
+    val jobs by jobViewModel.jobs.collectAsState()
+    val isLoading by jobViewModel.isLoading.collectAsState()
 
     Scaffold(
         topBar = {
@@ -121,17 +144,27 @@ fun EmployerHomeScreen(
             0 -> EmployerHomeTab(
                 modifier = Modifier.padding(paddingValues),
                 authViewModel = authViewModel,
+                dashboardViewModel = dashboardViewModel,
                 onNavigateToDashboard = onNavigateToDashboard,
-                onNavigateToAdminDashboard = onNavigateToAdminDashboard
+                onNavigateToAdminDashboard = onNavigateToAdminDashboard,
+                onViewApplications = onViewAllApplications
             )
             1 -> EmployerJobsTab(
                 modifier = Modifier.padding(paddingValues),
                 jobViewModel = jobViewModel,
-                onJobSelected = { /* Handle job selection */ }
+                jobs = jobs,
+                isLoading = isLoading,
+                onJobSelected = onNavigateToJobDetails,
+                onViewApplicationsForJob = { jobId, jobTitle ->
+                    // Navigate to job applications screen for this specific job
+                    // This would be implemented in your navigation graph
+                }
             )
             2 -> EmployerProfileTab(
                 modifier = Modifier.padding(paddingValues),
-                profileViewModel = profileViewModel
+                profileViewModel = profileViewModel,
+                employerProfile = employerProfile,
+                onEditProfile = onNavigateToEditProfile
             )
         }
     }
@@ -141,9 +174,20 @@ fun EmployerHomeScreen(
 fun EmployerHomeTab(
     modifier: Modifier = Modifier,
     authViewModel: AuthViewModel,
+    dashboardViewModel: EmployerDashboardViewModel = hiltViewModel(),
     onNavigateToDashboard: () -> Unit,
-    onNavigateToAdminDashboard: () -> Unit
+    onNavigateToAdminDashboard: () -> Unit,
+    onViewApplications: () -> Unit
 ) {
+    // Get dashboard data from the view model
+    val dashboardData by dashboardViewModel.dashboardData.collectAsState()
+    val isLoading by dashboardViewModel.isLoading.collectAsState()
+
+    // Load dashboard data when screen is shown
+    LaunchedEffect(Unit) {
+        dashboardViewModel.loadDashboardData()
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -162,29 +206,129 @@ fun EmployerHomeTab(
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // Placeholder for dashboard
-        Text(
-            text = "Your hiring dashboard will appear here soon.",
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center
-        )
+        // Statistics Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            elevation = CardDefaults.cardElevation(4.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Quick Overview",
+                    style = MaterialTheme.typography.titleLarge
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(32.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        // Active Jobs stat - make clickable
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.clickable { onNavigateToDashboard() }
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .background(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.WorkOutline,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "Active Jobs",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+
+                            Text(
+                                text = "${dashboardData?.activeJobs ?: 0}",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        // Applications stat - make clickable
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.clickable { onViewApplications() }
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .background(
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        shape = CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Description,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "Applications",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+
+                            Text(
+                                text = "${dashboardData?.totalApplicationsReceived ?: 0}",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        // Dashboard button
         Button(
             onClick = onNavigateToDashboard,
-            modifier = Modifier.align(Alignment.CenterHorizontally)
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary
+            )
         ) {
             Icon(
                 imageVector = Icons.Default.Dashboard,
                 contentDescription = "Dashboard Icon",
                 modifier = Modifier.padding(end = 8.dp)
             )
-            Text("View Dashboard")
+            Text("View Full Dashboard")
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        // Admin button (if user is admin)
         AdminButton(
             authViewModel = authViewModel,
             onNavigateToAdminDashboard = onNavigateToAdminDashboard
@@ -192,20 +336,142 @@ fun EmployerHomeTab(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EnhancedJobItem(
+    job: Job,
+    onClick: () -> Unit,
+    onViewApplications: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 2.dp
+        ),
+        onClick = onClick
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            // Status chip
+            val (statusColor, statusText) = when (job.status) {
+                JobStatus.APPROVED -> Pair(MaterialTheme.colorScheme.primary, "Approved")
+                JobStatus.PENDING_APPROVAL -> Pair(Color(0xFF2196F3), "Pending Approval")
+                JobStatus.REJECTED -> Pair(MaterialTheme.colorScheme.error, "Rejected")
+                else -> Pair(MaterialTheme.colorScheme.outline, "Closed")
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = job.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Box(
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(statusColor.copy(alpha = 0.1f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = statusColor
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Location and Salary
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LocationOn,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
+                    Text(
+                        text = "${job.district}, ${job.state}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Text(
+                    text = job.salaryRange ?: "Not specified",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Description preview
+            if (!job.description.isNullOrBlank()) {
+                Text(
+                    text = job.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 8.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
+
+            // Applications button
+            TextButton(
+                onClick = onViewApplications,
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+
+                Spacer(modifier = Modifier.width(4.dp))
+
+                Text("View Applications")
+            }
+        }
+    }
+}
+
+
 @Composable
 fun EmployerJobsTab(
     modifier: Modifier = Modifier,
     jobViewModel: JobViewModel,
-    onJobSelected: (String) -> Unit
+    jobs: List<Job>,
+    isLoading: Boolean,
+    onJobSelected: (String) -> Unit,
+    onViewApplicationsForJob: (String, String) -> Unit // New parameter: jobId, jobTitle
 ) {
-    val jobs by jobViewModel.jobs.collectAsState()
-    val isLoading by jobViewModel.isLoading.collectAsState()
-
-    // Load employer's jobs when tab is selected
-    LaunchedEffect(Unit) {
-        jobViewModel.getMyJobs(20) // Load more jobs
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -219,21 +485,54 @@ fun EmployerJobsTab(
         Spacer(modifier = Modifier.height(16.dp))
 
         if (isLoading) {
-            CircularProgressIndicator()
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
         } else if (jobs.isEmpty()) {
-            Text(
-                text = "You haven't posted any jobs yet. Tap the + button to create a new job posting.",
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
-            )
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.WorkOutline,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "No Jobs Posted Yet",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "Tap the + button to create a new job posting",
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
         } else {
             LazyColumn {
                 items(jobs) { job ->
-                    JobItem(
+                    EnhancedJobItem(
                         job = job,
-                        onClick = { onJobSelected(job.id) }
+                        onClick = { onJobSelected(job.id) },
+                        onViewApplications = {
+                            onViewApplicationsForJob(job.id, job.title)
+                        }
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
             }
         }
@@ -243,14 +542,17 @@ fun EmployerJobsTab(
 @Composable
 fun EmployerProfileTab(
     modifier: Modifier = Modifier,
-    profileViewModel: ProfileViewModel
+    profileViewModel: ProfileViewModel,
+    employerProfile: com.example.gigs.data.model.EmployerProfile?,
+    onEditProfile: () -> Unit
 ) {
-    val employerProfile by profileViewModel.employerProfile.collectAsState()
+    val scrollState = rememberScrollState()
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(16.dp)
+            .verticalScroll(scrollState),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(16.dp))
@@ -271,7 +573,7 @@ fun EmployerProfileTab(
                     modifier = Modifier.padding(16.dp)
                 ) {
                     Text(
-                        text = employerProfile?.companyName ?: "Company Name",
+                        text = employerProfile.companyName ?: "Company Name",
                         style = MaterialTheme.typography.headlineSmall
                     )
 
@@ -288,7 +590,7 @@ fun EmployerProfileTab(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = employerProfile?.industry ?: "Industry",
+                            text = employerProfile.industry ?: "Industry",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -306,7 +608,7 @@ fun EmployerProfileTab(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "${employerProfile?.district ?: ""}, ${employerProfile?.state ?: ""}",
+                            text = "${employerProfile.district ?: ""}, ${employerProfile.state ?: ""}",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -324,12 +626,12 @@ fun EmployerProfileTab(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = employerProfile?.companySize ?: "Company Size",
+                            text = employerProfile.companySize ?: "Company Size",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
 
-                    if (employerProfile?.website != null) {
+                    if (employerProfile.website != null) {
                         Spacer(modifier = Modifier.height(4.dp))
 
                         Row(
@@ -343,13 +645,13 @@ fun EmployerProfileTab(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = employerProfile?.website ?: "",
+                                text = employerProfile.website ?: "",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
                     }
 
-                    if (!employerProfile?.description.isNullOrEmpty()) {
+                    if (!employerProfile.description.isNullOrEmpty()) {
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Text(
@@ -360,7 +662,7 @@ fun EmployerProfileTab(
                         Spacer(modifier = Modifier.height(4.dp))
 
                         Text(
-                            text = employerProfile?.description ?: "",
+                            text = employerProfile.description ?: "",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -370,7 +672,7 @@ fun EmployerProfileTab(
             Spacer(modifier = Modifier.height(16.dp))
 
             Button(
-                onClick = { /* Navigate to edit profile */ },
+                onClick = onEditProfile,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(

@@ -23,6 +23,15 @@ sealed class Screen(open val route: String) {
     object JobListing : Screen("job_listing/{district}") {
         fun createRoute(district: String): String = "job_listing/$district"
     }
+
+    object EmployerJobDetails : Screen("employer_job_details/{jobId}") {
+        fun createRoute(jobId: String): String = "employer_job_details/$jobId"
+    }
+
+    object EditEmployerProfile : Screen("edit_employer_profile") {
+        override val route = "edit_employer_profile"
+    }
+
     object JobDetails : Screen("job_details/{jobId}") {
         fun createRoute(jobId: String): String = "job_details/$jobId"
     }
@@ -52,6 +61,19 @@ sealed class Screen(open val route: String) {
         fun createRoute(applicationId: String): String = "application_details/$applicationId"
     }
 
+    object JobApplications : Screen("job_applications/{jobId}/{jobTitle}") {
+        fun createRoute(jobId: String, jobTitle: String): String =
+            "job_applications/$jobId/${jobTitle.replace("/", "-")}"
+    }
+
+    object AllApplications : Screen("all_applications") {
+        override val route = "all_applications"
+    }
+
+    object ApplicantProfile : Screen("applicant_profile/{applicantId}") {
+        fun createRoute(applicantId: String): String = "applicant_profile/$applicantId"
+    }
+
     // Admin screens
     object AdminJobApproval : Screen("admin_job_approval")
     object AdminDashboard : Screen("admin_dashboard")
@@ -64,4 +86,6 @@ sealed class Screen(open val route: String) {
         }
         return route
     }
+
+
 }

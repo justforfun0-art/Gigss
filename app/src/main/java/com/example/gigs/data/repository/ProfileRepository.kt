@@ -6,6 +6,7 @@ import com.example.gigs.data.model.User
 // Updated ProfileRepository.kt for Supabase 3.0.3
 
 import com.example.gigs.data.model.EmployeeProfile
+import com.example.gigs.data.model.EmployeeProfileWithUserInfo
 import com.example.gigs.data.model.EmployerProfile
 import com.example.gigs.data.model.Profile
 import com.example.gigs.data.model.UserType
@@ -149,6 +150,8 @@ class ProfileRepository @Inject constructor(
             emit(Result.failure(e))
         }
     }
+
+
 
     // Upload profile photo to Supabase storage
     suspend fun uploadProfilePhoto(userId: String, photoBytes: ByteArray): Flow<Result<String>> = flow {
@@ -307,6 +310,36 @@ class ProfileRepository @Inject constructor(
                 emit(Result.success(profile))
             } else {
                 emit(Result.failure(Exception("Employee profile not found")))
+            }
+        } catch (e: Exception) {
+            emit(Result.failure(e))
+        }
+    }
+
+    // In ProfileRepository.kt
+    // In ProfileRepository.kt
+    fun getEmployeeProfileWithUserInfo(userId: String): Flow<Result<EmployeeProfileWithUserInfo>> = flow {
+        try {
+            // Get user from Supabase users table
+            val user = getUserById(userId)
+
+            // Get employee profile from Supabase
+            val employeeProfile = supabaseClient.table("employee_profiles")
+                .select {
+                    filter { eq("user_id", userId) }
+                }
+                .decodeSingleOrNull<EmployeeProfile>()
+
+            if (user != null && employeeProfile != null) {
+                val combinedProfile = EmployeeProfileWithUserInfo(
+                    employeeProfile = employeeProfile,
+                    phone = user.phone,
+                    userType = user.userType,
+                    isAdmin = user.isAdmin ?: false // Add null safety
+                )
+                emit(Result.success(combinedProfile))
+            } else {
+                emit(Result.failure(Exception("Profile or user information not found")))
             }
         } catch (e: Exception) {
             emit(Result.failure(e))

@@ -55,6 +55,7 @@ import com.example.gigs.data.model.ApplicationWithJob
 import com.example.gigs.ui.theme.PrimaryBlue
 import com.example.gigs.utils.DateUtils
 import com.example.gigs.viewmodel.JobApplicationDetailsViewModel
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,12 +124,16 @@ fun JobApplicationDetailsScreen(
                         .verticalScroll(scrollState)
                 ) {
                     // Application status
-                    val (statusColor, statusLabel) = when (application?.status?.uppercase()) {
+                    val (statusColor, statusLabel) = when (application?.status.toString().uppercase(
+                        Locale.ROOT)) {
                         "APPLIED" -> Pair(PrimaryBlue, "Application Submitted")
                         "SHORTLISTED" -> Pair(MaterialTheme.colorScheme.tertiary, "Shortlisted")
                         "HIRED" -> Pair(MaterialTheme.colorScheme.secondary, "Hired")
                         "REJECTED" -> Pair(MaterialTheme.colorScheme.error, "Application Rejected")
-                        else -> Pair(MaterialTheme.colorScheme.outlineVariant, application?.status ?: "Unknown")
+                        else -> Pair(
+                            MaterialTheme.colorScheme.outlineVariant,
+                            application?.status?.toString() ?: "Unknown"
+                        )
                     }
 
                     Box(
@@ -287,8 +292,7 @@ fun JobApplicationDetailsScreen(
                     Spacer(modifier = Modifier.height(24.dp))
 
                     // Action buttons
-                    if (application?.status?.uppercase() == "HIRED") {
-                        // Show write review button for completed jobs
+                    if (application?.status.toString().uppercase(Locale.ROOT) == "HIRED") {                        // Show write review button for completed jobs
                         Button(
                             onClick = {
                                 application?.let {

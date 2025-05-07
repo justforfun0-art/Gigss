@@ -23,8 +23,17 @@ enum class WorkType {
 }
 
 @Serializable
+enum class ApplicationStatus {
+    APPLIED,
+    REVIEWING,
+    INTERVIEW,
+    REJECTED,
+    ACCEPTED,
+    WITHDRAWN
+}
+
+@Serializable
 data class Job(
-    @Transient
     @SerialName("id")
     val id: String = "",
 
@@ -87,9 +96,15 @@ data class Job(
     val updatedAt: String? = null
 )
 
-// For job applications tracking
+/**
+ * Comprehensive ApplicationWithJob class that combines both previous implementations
+ * - Includes the complete Job object for detailed views
+ * - Contains extracted job fields for efficient list displays
+ * - Properly annotated for serialization
+ */
 @Serializable
 data class ApplicationWithJob(
+    @SerialName("id")
     val id: String = "",
 
     @SerialName("job_id")
@@ -98,7 +113,8 @@ data class ApplicationWithJob(
     @SerialName("employee_id")
     val employeeId: String = "",
 
-    val status: String = "APPLIED",
+    @SerialName("status")
+    val status: ApplicationStatus = ApplicationStatus.APPLIED,
 
     @SerialName("applied_at")
     val appliedAt: String? = null,
@@ -106,5 +122,39 @@ data class ApplicationWithJob(
     @SerialName("updated_at")
     val updatedAt: String? = null,
 
-    val job: Job = Job()
+    // Complete job object for detailed views
+    val job: Job = Job(),
+
+    // Additional fields extracted from job for efficient list displays
+    // These fields don't need to be included in serialization when the full job object is present
+    // Use @Transient if these are only used for UI and shouldn't be serialized
+    @Transient
+    val jobTitle: String = job.title,
+
+    @Transient
+    val jobState: String = job.state,
+
+    @Transient
+    val jobDistrict: String = job.district,
+
+    @Transient
+    val jobStatus: String = job.status.toString(),
+
+    @Transient
+    val employerId: String = job.employerId
+)
+
+/**
+ * Data class for dashboard statistics and recent items
+ */
+@Serializable
+data class DashboardData(
+    @SerialName("active_jobs")
+    val activeJobs: Int = 0,
+
+    @SerialName("total_applications_received")
+    val totalApplicationsReceived: Int = 0,
+
+    @SerialName("recent_applications")
+    val recentApplications: List<ApplicationWithJob> = emptyList()
 )

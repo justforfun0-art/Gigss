@@ -486,7 +486,7 @@ fun ApplicationItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                val statusColor = when (application.status.uppercase()) {
+                val statusColor = when (application.status.toString().uppercase()) {
                     "APPLIED" -> MaterialTheme.colorScheme.primary
                     "SHORTLISTED" -> MaterialTheme.colorScheme.tertiary
                     "HIRED" -> MaterialTheme.colorScheme.secondary
@@ -495,7 +495,7 @@ fun ApplicationItem(
                 }
 
                 Text(
-                    text = application.status,
+                    text = application.status.name,
                     style = MaterialTheme.typography.bodyMedium,
                     color = statusColor
                 )
