@@ -27,8 +27,12 @@ enum class ApplicationStatus {
     APPLIED,
     REVIEWING,
     INTERVIEW,
+    SHORTLISTED,  // Add this missing status
+    INTERVIEW_SCHEDULED, // Add this if it exists in your data
     REJECTED,
     ACCEPTED,
+    HIRED, // Add this if needed
+    COMPLETED, // Add this if needed
     WITHDRAWN
 }
 
@@ -141,7 +145,10 @@ data class ApplicationWithJob(
     val jobStatus: String = job.status.toString(),
 
     @Transient
-    val employerId: String = job.employerId
+    val employerId: String = job.employerId,
+
+    @Transient
+val employerName: String? = null
 )
 
 /**

@@ -25,9 +25,32 @@ import com.example.gigs.data.model.UserProfileStatusUpdate
 
 @Singleton
 class ProfileRepository @Inject constructor(
-    private val firebaseAuthManager: FirebaseAuthManager,
-    private val supabaseClient: SupabaseClient
+    val firebaseAuthManager: FirebaseAuthManager,
+    val supabaseClient: SupabaseClient
 ) {
+
+
+    suspend fun ProfileRepository.getEmployerProfileByUserId(userId: String): kotlinx.coroutines.flow.Flow<Result<EmployerProfile>> = kotlinx.coroutines.flow.flow {
+        try {
+            val profile = supabaseClient
+                .table("employer_profiles")
+                .select {
+                    filter {
+                        eq("user_id", userId)
+                    }
+                }
+                .decodeSingleOrNull<EmployerProfile>()
+
+            if (profile != null) {
+                emit(Result.success(profile))
+            } else {
+                emit(Result.failure(Exception("Employer profile not found")))
+            }
+        } catch (e: Exception) {
+            emit(Result.failure(e))
+        }
+    }
+
     // Create or update basic profile
     suspend fun createOrUpdateProfile(profile: Profile): Flow<Result<Profile>> = flow {
         try {

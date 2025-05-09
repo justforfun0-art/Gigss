@@ -181,6 +181,9 @@ fun EmployerHomeTab(
 ) {
     // Get dashboard data from the view model
     val dashboardData by dashboardViewModel.dashboardData.collectAsState()
+    val totalJobs by dashboardViewModel.totalJobs.collectAsState()
+    val activeJobs by dashboardViewModel.activeJobs.collectAsState()
+    val totalApplications by dashboardViewModel.totalApplications.collectAsState()
     val isLoading by dashboardViewModel.isLoading.collectAsState()
 
     // Load dashboard data when screen is shown
@@ -262,7 +265,7 @@ fun EmployerHomeTab(
                             )
 
                             Text(
-                                text = "${dashboardData?.activeJobs ?: 0}",
+                                text = "$activeJobs",
                                 style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -297,8 +300,9 @@ fun EmployerHomeTab(
                                 style = MaterialTheme.typography.bodyMedium
                             )
 
+                            // Applications stat - update the text to use the StateFlow value
                             Text(
-                                text = "${dashboardData?.totalApplicationsReceived ?: 0}",
+                                text = "$totalApplications",
                                 style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.secondary
                             )
@@ -335,7 +339,6 @@ fun EmployerHomeTab(
         )
     }
 }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EnhancedJobItem(

@@ -51,6 +51,10 @@ class ProfileViewModel @Inject constructor(
     private val _employeeProfile = MutableStateFlow<EmployeeProfile?>(null)
     val employeeProfile: StateFlow<EmployeeProfile?> = _employeeProfile
 
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+
     fun getEmployeeProfile() {
         viewModelScope.launch {
             val userId = authRepository.getCurrentUserId() ?: return@launch

@@ -26,35 +26,75 @@ class ApplicationRepository @Inject constructor(
      */
     suspend fun getMyApplications(limit: Int = 0): Flow<Result<List<ApplicationWithJob>>> = flow {
         try {
+            // Step 1: Get current user ID
             val userId = authRepository.getCurrentUserId()
-                ?: throw Exception("User not authenticated")
+            Log.d("ApplicationRepo", "Getting applications for user ID: $userId")
 
-            val applications = supabaseClient
-                .table("applications")
-                .select {
-                    filter {
-                        eq("employee_id", userId)
-                    }
-                    order("applied_at", Order.DESCENDING) // Newest first
-                    if (limit > 0) {
-                        limit(limit.toLong())
-                    }
-                }
-                .decodeList<ApplicationWithJob>()
-
-            // Attach job to each application
-            val applicationWithJobs = applications.map { application ->
-                val job = getJobById(application.jobId)
-                application.copy(job = job ?: Job())
+            if (userId == null) {
+                Log.e("ApplicationRepo", "ERROR: User not authenticated!")
+                emit(Result.failure(Exception("User not authenticated")))
+                return@flow
             }
 
-            emit(Result.success(applicationWithJobs))
+            Log.d("ApplicationRepo", "Querying applications table for employee_id=$userId with limit=$limit")
+
+            try {
+                // Step 2: Query applications
+                val applications = supabaseClient
+                    .table("applications")
+                    .select {
+                        filter {
+                            eq("employee_id", userId)
+                        }
+                        order("applied_at", Order.DESCENDING) // Newest first
+                        if (limit > 0) {
+                            limit(limit.toLong())
+                        }
+                    }
+                    .decodeList<ApplicationWithJob>()
+
+                Log.d("ApplicationRepo", "Query complete. Found ${applications.size} applications")
+
+                // Log each application for debugging
+                applications.forEachIndexed { index, app ->
+                    Log.d("ApplicationRepo", "Application $index: id=${app.id}, jobId=${app.jobId}, status=${app.status}")
+                }
+
+                // Step 3: Attach job details to each application
+                Log.d("ApplicationRepo", "Starting to attach job details to applications")
+                val applicationWithJobs = mutableListOf<ApplicationWithJob>()
+
+                applications.forEachIndexed { index, application ->
+                    try {
+                        Log.d("ApplicationRepo", "Getting job details for application $index, jobId=${application.jobId}")
+                        val job = getJobById(application.jobId)
+                        if (job != null) {
+                            Log.d("ApplicationRepo", "Found job: id=${job.id}, title=${job.title}")
+                            applicationWithJobs.add(application.copy(job = job))
+                        } else {
+                            Log.e("ApplicationRepo", "Job not found for jobId=${application.jobId}, using empty job object")
+                            applicationWithJobs.add(application.copy(job = Job()))
+                        }
+                    } catch (e: Exception) {
+                        Log.e("ApplicationRepo", "Error attaching job to application $index: ${e.message}", e)
+                        // Still add the application with an empty job to avoid losing data
+                        applicationWithJobs.add(application.copy(job = Job()))
+                    }
+                }
+
+                Log.d("ApplicationRepo", "Completed processing all applications. Final count: ${applicationWithJobs.size}")
+                emit(Result.success(applicationWithJobs))
+
+            } catch (e: Exception) {
+                Log.e("ApplicationRepo", "Error querying applications: ${e.message}", e)
+                emit(Result.failure(e))
+            }
         } catch (e: Exception) {
+            Log.e("ApplicationRepo", "Fatal error in getMyApplications: ${e.message}", e)
+            e.printStackTrace()
             emit(Result.failure(e))
         }
     }
-
-
     /**
      * Check if the current user has applied to a specific job
      */

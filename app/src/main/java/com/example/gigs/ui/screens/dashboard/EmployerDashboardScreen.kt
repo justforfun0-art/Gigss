@@ -2,10 +2,10 @@ package com.example.gigs.ui.screens.dashboard
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -17,25 +17,21 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import com.example.gigs.data.model.*
-import com.example.gigs.data.repository.ApplicationRepository
-import com.example.gigs.data.repository.JobRepository
+import com.example.gigs.data.model.Activity
+import com.example.gigs.data.model.ApplicationWithJob
+import com.example.gigs.data.model.CategoryStat
+import com.example.gigs.data.model.Job
+import com.example.gigs.data.model.LocationStat
+import com.example.gigs.ui.components.DashboardCard
+import com.example.gigs.ui.components.DashboardEmptyStateMessage
+import com.example.gigs.ui.components.DashboardSectionHeader
 import com.example.gigs.utils.DateUtils.formatDate
 import com.example.gigs.utils.DateUtils.formatTimeAgo
 import com.example.gigs.viewmodel.EmployerApplicationsViewModel
 import com.example.gigs.viewmodel.EmployerDashboardViewModel
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.*
-import javax.inject.Inject
+import com.example.gigs.viewmodel.ProfileViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,16 +46,26 @@ fun EmployerDashboardScreen(
     onViewApplication: (String) -> Unit,
     onBackPressed: () -> Unit
 ) {
-    val dashboardData by dashboardViewModel.dashboardData.collectAsState()
-    val recentActivities by dashboardViewModel.recentActivities.collectAsState()
-    val recentJobs by dashboardViewModel.recentJobs.collectAsState()
-    val recentApplications by applicationsViewModel.recentApplications.collectAsState()
-    val locationStats by dashboardViewModel.locationStats.collectAsState()
-    val categoryStats by dashboardViewModel.categoryStats.collectAsState()
+    // Collect state from the view models
+    val totalJobs by dashboardViewModel.totalJobs.collectAsState()
+    val activeJobs by dashboardViewModel.activeJobs.collectAsState()
+    val totalApplications by dashboardViewModel.totalApplications.collectAsState()
+    val averageRating by dashboardViewModel.averageRating.collectAsState()
     val isLoading by dashboardViewModel.isLoading.collectAsState()
-    val isLoadingApplications by applicationsViewModel.isLoading.collectAsState()
+    val recentJobs by dashboardViewModel.recentJobs.collectAsState()
+    val recentActivities by dashboardViewModel.recentActivities.collectAsState(emptyList())
+    val locationStats by dashboardViewModel.locationStats.collectAsState(emptyList())
+    val categoryStats by dashboardViewModel.categoryStats.collectAsState(emptyList())
 
-    // Load dashboard data and applications
+    // Get applications data
+    val recentApplications by applicationsViewModel.recentApplications.collectAsState()
+    val isLoadingApplications by applicationsViewModel.isLoading.collectAsState(false)
+
+    // Get employer profile data
+    val employerProfile by dashboardViewModel.employerProfile.collectAsState()
+    val isProfileLoading by dashboardViewModel.isProfileLoading.collectAsState(false)
+
+    // Load dashboard data when screen is shown
     LaunchedEffect(Unit) {
         dashboardViewModel.loadDashboardData()
         applicationsViewModel.loadRecentApplications(5)
@@ -92,7 +98,7 @@ fun EmployerDashboardScreen(
             }
         }
     ) { paddingValues ->
-        if (isLoading && dashboardData == null) {
+        if ((isLoading && recentJobs.isEmpty()) || isProfileLoading) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -102,385 +108,332 @@ fun EmployerDashboardScreen(
                 CircularProgressIndicator()
             }
         } else {
-            LazyColumn(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
-                    .padding(horizontal = 16.dp)
+                    .verticalScroll(rememberScrollState())
             ) {
-                item {
-                    Spacer(modifier = Modifier.height(16.dp))
+                // Profile Section
+                EmployerProfileSection(
+                    name = employerProfile?.companyName ?: "Your Company",
+                    location = "${employerProfile?.district ?: "District"}, ${employerProfile?.state ?: "State"}",
+                    onEditProfileClick = { /* Navigate to edit profile */ }
+                )
 
-                    // Stats Cards
-                    Row(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        StatCard(
-                            title = "Total Jobs",
-                            value = dashboardData?.totalJobs ?: 0,
-                            icon = Icons.Default.Work,
-                            modifier = Modifier.weight(1f),
-                            onClick = onViewAllJobs
-                        )
+                Divider(modifier = Modifier.padding(horizontal = 16.dp))
 
-                        Spacer(modifier = Modifier.width(16.dp))
+                // Dashboard Section
+                Text(
+                    text = "Dashboard",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(16.dp)
+                )
 
-                        StatCard(
-                            title = "Active Jobs",
-                            value = dashboardData?.activeJobs ?: 0,
-                            icon = Icons.Default.Visibility,
-                            modifier = Modifier.weight(1f),
-                            onClick = onViewAllJobs
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        StatCard(
-                            title = "Applications",
-                            value = dashboardData?.totalApplicationsReceived ?: 0,
-                            icon = Icons.Default.Description,
-                            modifier = Modifier.weight(1f),
-                            onClick = { /* Navigate to all applications */ }
-                        )
-
-                        Spacer(modifier = Modifier.width(16.dp))
-
-                        StatCard(
-                            title = "Rating",
-                            valueText = String.format("%.1f", dashboardData?.averageRating ?: 0f),
-                            icon = Icons.Default.Star,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-                }
-
-                // Recent Applications Section
-                item {
-                    Text(
-                        text = "Recent Applications",
-                        style = MaterialTheme.typography.titleLarge
+                // Stats cards in a grid
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    DashboardCard(
+                        icon = Icons.Default.Work,
+                        value = totalJobs.toString(),
+                        label = "Total Jobs",
+                        modifier = Modifier.weight(1f),
+                        onClick = onViewAllJobs
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    DashboardCard(
+                        icon = Icons.Default.CheckCircle,
+                        value = activeJobs.toString(),
+                        label = "Active Jobs",
+                        modifier = Modifier.weight(1f)
+                    )
                 }
 
-                if (isLoadingApplications) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(100.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(40.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    DashboardCard(
+                        icon = Icons.Default.Description,
+                        value = totalApplications.toString(),
+                        label = "Applications",
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    DashboardCard(
+                        icon = Icons.Default.Star,
+                        value = String.format("%.1f", averageRating),
+                        label = "Rating",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Post New Job Card
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    onClick = onCreateJob
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Post New Job",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+
+                            Text(
+                                text = "Create a new job listing to find candidates",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Icon(
+                            imageVector = Icons.Default.ArrowForward,
+                            contentDescription = "Post new job",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
                     }
-                } else if (recentApplications.isEmpty()) {
-                    item {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Recent Applications Section
+                if (!isLoadingApplications) {
+                    DashboardSectionHeader(
+                        title = "Recent Applications",
+                        onViewAll = { /* Navigate to all applications */ }
+                    )
+
+                    if (recentApplications.isEmpty()) {
+                        DashboardEmptyStateMessage(
+                            message = "No applications yet",
+                            actionText = "Post a Job",
+                            onActionClick = onCreateJob
+                        )
+                    } else {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp)
                         ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = "No applications yet",
-                                    style = MaterialTheme.typography.bodyLarge
+                            recentApplications.take(3).forEach { application ->
+                                ApplicationItem(
+                                    application = application,
+                                    onClick = { onViewApplication(application.id) }
                                 )
-
                                 Spacer(modifier = Modifier.height(8.dp))
-
-                                Button(onClick = onCreateJob) {
-                                    Text("Create a job to receive applications")
-                                }
                             }
                         }
                     }
-                } else {
-                    items(recentApplications) { application ->
-                        ApplicationItem(
-                            application = application,
-                            onClick = { onViewApplication(application.id) }
-                        )
 
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
 
                 // Recent Jobs Section
-                item {
+                DashboardSectionHeader(
+                    title = "My Recent Jobs",
+                    onViewAll = onViewAllJobs
+                )
+
+                if (recentJobs.isEmpty()) {
+                    DashboardEmptyStateMessage(
+                        message = "You haven't posted any jobs yet",
+                        actionText = "Post a Job",
+                        onActionClick = onCreateJob
+                    )
+                } else {
+                    // Display recent jobs
+                    Column(
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    ) {
+                        recentJobs.take(3).forEach { job ->
+                            JobItem(
+                                job = job,
+                                onClick = { /* Navigate to job details */ }
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
+
+                // Stats Sections - Added from paste.txt
+                if (locationStats.isNotEmpty() || categoryStats.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    SectionHeader(
-                        title = "Your Jobs",
-                        onViewAll = onViewAllJobs
+                    Text(
+                        text = "Applications by Location",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp)
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
+
+                    // Location stats chart
+                    LocationStatsChart(stats = locationStats)
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "Applications by Category",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Category stats chart
+                    CategoryStatsChart(stats = categoryStats)
                 }
 
-                if (recentJobs.isEmpty()) {
-                    item {
-                        EmptyStateMessage(
-                            message = "You haven't posted any jobs yet",
-                            actionText = "Create Job",
-                            onActionClick = onCreateJob
-                        )
+                // Recent Activities Section - Added from paste.txt
+                if (recentActivities.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-                } else {
-                    items(recentJobs) { job ->
-                        JobItem(
-                            job = job,
-                            onClick = { /* Navigate to job details */ }
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                }
-
-                // Stats Sections
-                if (locationStats.isNotEmpty() || categoryStats.isNotEmpty()) {
-                    item {
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Text(
-                            text = "Applications by Location",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Location stats chart
-                        LocationStatsChart(stats = locationStats)
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Text(
-                            text = "Applications by Category",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Category stats chart
-                        CategoryStatsChart(stats = categoryStats)
-
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-                }
-
-                // Recent Activities Section
-                item {
-                    SectionHeader(
+                    DashboardSectionHeader(
                         title = "Recent Activities",
                         onViewAll = onViewAllActivities
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-
-                if (recentActivities.isEmpty()) {
-                    item {
-                        EmptyStateMessage(
-                            message = "No recent activities to show"
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-                } else {
-                    items(recentActivities) { activity ->
-                        ActivityItem(activity = activity)
-
-                        Spacer(modifier = Modifier.height(8.dp))
+                    Column(
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    ) {
+                        recentActivities.take(3).forEach { activity ->
+                            ActivityItem(activity = activity)
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
                     }
                 }
 
-                item {
-                    Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Create Job Button
+                Button(
+                    onClick = onCreateJob,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    Text("Create New Job")
                 }
+
+                Spacer(modifier = Modifier.height(24.dp))
             }
         }
     }
 }
 
-// Common composables for dashboard screens
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StatCard(
-    title: String,
-    value: Int? = null,
-    valueText: String? = null,
-    icon: ImageVector,
-    modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null
+fun EmployerProfileSection(
+    name: String,
+    location: String,
+    onEditProfileClick: () -> Unit
 ) {
-    Card(
-        modifier = modifier,
-        onClick = { onClick?.invoke() },
-        enabled = onClick != null
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
+        // Profile logo/avatar
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .size(80.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = icon,
+                imageVector = Icons.Default.Business,
                 contentDescription = null,
+                modifier = Modifier.size(40.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Company name
+        Text(
+            text = name,
+            style = MaterialTheme.typography.titleLarge
+        )
+
+        // Location
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.LocationOn,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
                 tint = MaterialTheme.colorScheme.primary
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.width(4.dp))
 
             Text(
-                text = if (value != null) value.toString() else valueText ?: "0",
-                style = MaterialTheme.typography.headlineSmall
-            )
-
-            Text(
-                text = title,
+                text = location,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.primary
             )
         }
-    }
-}
 
-@Composable
-fun SectionHeader(
-    title: String,
-    onViewAll: (() -> Unit)? = null
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium
-        )
+        Spacer(modifier = Modifier.height(16.dp))
 
-        if (onViewAll != null) {
-            TextButton(onClick = onViewAll) {
-                Text("View All")
-            }
-        }
-    }
-}
-
-@Composable
-fun EmptyStateMessage(
-    message: String,
-    actionText: String? = null,
-    onActionClick: (() -> Unit)? = null
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        // Edit Profile button
+        Button(
+            onClick = onEditProfileClick,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            )
         ) {
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center
+            Icon(
+                imageVector = Icons.Default.Edit,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp)
             )
 
-            if (actionText != null && onActionClick != null) {
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
-                Button(onClick = onActionClick) {
-                    Text(actionText)
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ApplicationItem(
-    application: ApplicationWithJob,
-    onClick: (() -> Unit)? = null
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = { onClick?.invoke() },
-        enabled = onClick != null
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            Text(
-                text = application.job.title,
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = application.job.location,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                val statusColor = when (application.status.name) {
-                    "APPLIED" -> MaterialTheme.colorScheme.primary
-                    "SHORTLISTED" -> MaterialTheme.colorScheme.tertiary
-                    "HIRED" -> MaterialTheme.colorScheme.secondary
-                    "REJECTED" -> MaterialTheme.colorScheme.error
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                }
-
-                Text(
-                    text = application.status.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = statusColor
-                )
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            if (application.appliedAt != null) {
-                Text(
-                    text = "Applied on ${formatDate(application.appliedAt)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Applicant ID: ${application.employeeId}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium
-            )
+            Text("Edit Profile")
         }
     }
 }
@@ -555,6 +508,105 @@ fun JobItem(
                         text = "Posted on ${formatDate(job.createdAt)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Add "View Details" text button
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = { onClick?.invoke() }) {
+                    Text("View Details")
+                    Icon(
+                        imageVector = Icons.Default.ArrowForward,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(start = 4.dp)
+                            .size(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ApplicationItem(
+    application: ApplicationWithJob,
+    onClick: (() -> Unit)? = null
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { onClick?.invoke() },
+        enabled = onClick != null
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = application.job.title,
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = application.job.location,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                val statusColor = when (application.status.toString().uppercase()) {
+                    "APPLIED" -> MaterialTheme.colorScheme.primary
+                    "SHORTLISTED" -> MaterialTheme.colorScheme.tertiary
+                    "HIRED" -> MaterialTheme.colorScheme.secondary
+                    "REJECTED" -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
+
+                Text(
+                    text = application.status.toString(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = statusColor
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            if (application.appliedAt != null) {
+                Text(
+                    text = "Applied on ${formatDate(application.appliedAt)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Add "View Details" button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = { onClick?.invoke() }) {
+                    Text("View Details")
+                    Icon(
+                        imageVector = Icons.Default.ArrowForward,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(start = 4.dp)
+                            .size(16.dp)
                     )
                 }
             }
@@ -635,8 +687,12 @@ fun LocationStatsChart(
 ) {
     val topLocations = stats.take(5)
 
+    if (topLocations.isEmpty()) return
+
     Card(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
     ) {
         Column(
             modifier = Modifier
@@ -690,8 +746,12 @@ fun CategoryStatsChart(
 ) {
     val topCategories = stats.take(5)
 
+    if (topCategories.isEmpty()) return
+
     Card(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
     ) {
         Column(
             modifier = Modifier
