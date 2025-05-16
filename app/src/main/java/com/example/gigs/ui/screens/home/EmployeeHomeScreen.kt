@@ -1,5 +1,6 @@
 package com.example.gigs.ui.screens.home
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -225,6 +226,8 @@ fun EmployeeHomeTab(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val employeeProfile by jobViewModel.employeeProfile.collectAsState()
+    val isShowingRejectedJobs by jobViewModel.isShowingRejectedJobs.collectAsState()
+
 
     // Create JobWithEmployer list by mapping the featuredJobs
     val jobsWithEmployers = remember(featuredJobs) {
@@ -247,11 +250,19 @@ fun EmployeeHomeTab(
     }
 
     // When the employee profile changes, load jobs for their district
-    LaunchedEffect(employeeProfile) {
+    LaunchedEffect(employeeProfile, isShowingRejectedJobs) {
         if (employeeProfile != null) {
             val employeeDistrict = employeeProfile?.district ?: ""
             if (employeeDistrict.isNotEmpty()) {
-                jobViewModel.getLocalizedFeaturedJobs(employeeDistrict, 10)
+                if (isShowingRejectedJobs) {
+                    // We're in rejected jobs mode, load only rejected jobs
+                    Log.d("EmployeeHomeTab", "Loading rejected jobs for district: $employeeDistrict")
+                    jobViewModel.getOnlyRejectedJobs(employeeDistrict)
+                } else {
+                    // Normal mode, load regular featured jobs
+                    Log.d("EmployeeHomeTab", "Loading regular jobs for district: $employeeDistrict")
+                    jobViewModel.getLocalizedFeaturedJobs(employeeDistrict, 10)
+                }
             } else {
                 // Fallback to getting general featured jobs if no district is set
                 jobViewModel.getFeaturedJobs(10)
@@ -318,12 +329,6 @@ fun EmployeeHomeTab(
             if (isLoading) {
                 CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.CenterHorizontally)
-                )
-            } else if (featuredJobs.isEmpty()) {
-                Text(
-                    text = "No jobs available in your area at the moment.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    textAlign = TextAlign.Center
                 )
             } else {
                 // Tinder-style swipeable job cards

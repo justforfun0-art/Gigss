@@ -91,6 +91,7 @@ import com.example.gigs.ui.theme.PrimaryBlue
 import com.example.gigs.viewmodel.JobViewModel
 import com.example.gigs.viewmodel.ProcessedJobsViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.gigs.viewmodel.JobHistoryViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -113,25 +114,24 @@ fun SwipeableJobCards(
     onJobDetails: (String) -> Unit,
     modifier: Modifier = Modifier,
     jobViewModel: JobViewModel = hiltViewModel(),
-    processedJobsViewModel: ProcessedJobsViewModel = hiltViewModel()
+    processedJobsViewModel: ProcessedJobsViewModel = hiltViewModel(),
+    jobHistoryViewModel: JobHistoryViewModel? = hiltViewModel(),
 ) {
-    if (jobs.isEmpty()) {
-        EmptyJobsPlaceholder(modifier)
-        return
-    }
-
-    // Get the processed job IDs from the shared ViewModel
-    val processedJobIds = processedJobsViewModel.processedJobIds.collectAsState().value
+    // ===== STATE VARIABLES (all at top level) =====
+    val sessionProcessedJobIds by processedJobsViewModel.sessionProcessedJobIds.collectAsState()
+    val processedJobIds by processedJobsViewModel.processedJobIds.collectAsState()
+    val hasProcessedJobs = processedJobIds.isNotEmpty()
+    val isShowingRejectedJobs by processedJobsViewModel.isShowingRejectedJobs.collectAsState()
 
     // Create a mutable state list of unique jobs by ID, filtered to remove already processed jobs
-    val displayJobsList = remember(jobs, processedJobIds) {
-        // Filter out any jobs that have already been processed
+    val displayJobsList = remember(jobs, sessionProcessedJobIds) {
+        // Filter out any jobs that have already been processed in this session
         val uniqueJobs = jobs
-            .filter { job -> !processedJobIds.contains(job.id) }
+            .filter { job -> !sessionProcessedJobIds.contains(job.id) }
             .distinctBy { it.id }
 
         Log.d("SwipeableJobCards", "Initializing with ${uniqueJobs.size} unique jobs from ${jobs.size} total jobs")
-        Log.d("SwipeableJobCards", "Excluding ${processedJobIds.size} already processed jobs")
+        Log.d("SwipeableJobCards", "Excluding ${sessionProcessedJobIds.size} already processed jobs")
 
         mutableStateListOf<Job>().apply { addAll(uniqueJobs) }
     }
@@ -147,30 +147,11 @@ fun SwipeableJobCards(
 
     // Track whether to show confetti in dialog
     var showDialogConfetti by remember { mutableStateOf(false) }
-
-    // Track if we should close dialog after confetti animation
     var shouldCloseDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
 
-    // Debug logs to help track what's happening
-    LaunchedEffect(displayJobsList.size, currentIndex) {
-        Log.d("SwipeableJobCards", "Display jobs count: ${displayJobsList.size}, Current index: $currentIndex")
-        Log.d("SwipeableJobCards", "Processed job IDs: $processedJobIds")
-    }
-
-    // Effect to preserve state during navigation
-    DisposableEffect(Unit) {
-        // This runs on component creation
-        Log.d("SwipeableJobCards", "Component initialized with ${displayJobsList.size} jobs")
-        Log.d("SwipeableJobCards", "Starting with ${processedJobIds.size} processed jobs")
-
-        onDispose {
-            // This code runs when the composable is removed from composition (navigation away)
-            Log.d("SwipeableJobCards", "Component is being disposed but preserving state of ${processedJobIds.size} processed jobs")
-        }
-    }
-
+    // ===== HELPER FUNCTIONS =====
     // Setup vibration feedback
     val vibrator = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -201,23 +182,47 @@ fun SwipeableJobCards(
             return
         }
 
-        // Check if we've already processed this job
-        if (processedJobIds.contains(job.id)) {
-            Log.d("SwipeableJobCards", "Job ${job.id} already processed, skipping rejection")
+        // Check if job is already processed in this session
+        if (sessionProcessedJobIds.contains(job.id)) {
+            Log.d("SwipeableJobCards", "Job ${job.id} already processed in this session, skipping rejection")
             return
         }
 
-        // Use the ViewModels to mark the job as rejected
-        processedJobsViewModel.addProcessedJob(job.id)
+        // IMMEDIATELY remove from display list
+        val index = displayJobsList.indexOf(job)
+        if (index >= 0) {
+            Log.d("SwipeableJobCards", "Immediately removing job ${job.id} at index $index from display list")
+            displayJobsList.removeAt(index)
+
+            // Adjust current index if needed
+            if (index <= currentIndex && currentIndex > 0) {
+                currentIndex--
+            }
+
+            // Make sure currentIndex stays valid
+            if (currentIndex >= displayJobsList.size && displayJobsList.isNotEmpty()) {
+                currentIndex = displayJobsList.size - 1
+            }
+        } else {
+            Log.e("SwipeableJobCards", "Could not find job ${job.id} in display list to remove")
+        }
+
+        // Mark job as rejected in the repository
+        processedJobsViewModel.markJobAsRejected(job.id)
+
+        // Notify the backend
         jobViewModel.markJobAsNotInterested(job.id)
 
-        // Call the reject callback
+        // UI feedback
         onJobRejected(job)
         triggerVibration()
 
-        // Set job to be processed by the LaunchedEffect
+        // Set job for additional processing by LaunchedEffect if needed
         jobToProcess = job
         jobProcessAction = "reject"
+
+        // Refresh job history
+        jobHistoryViewModel?.refreshApplicationHistory()
     }
 
     // Function to handle swipe right (accept)
@@ -229,26 +234,98 @@ fun SwipeableJobCards(
             return
         }
 
-        // Check if we've already processed this job
-        if (processedJobIds.contains(job.id)) {
-            Log.d("SwipeableJobCards", "Job ${job.id} already processed, skipping acceptance")
+        // Check if job is already processed in this session
+        if (processedJobsViewModel.isJobProcessedInCurrentSession(job.id)) {
+            Log.d("SwipeableJobCards", "Job ${job.id} already processed in this session, skipping acceptance")
             return
         }
 
-        // Use the ViewModels to apply for the job
-        processedJobsViewModel.addProcessedJob(job.id)
+        // IMMEDIATELY remove from display list
+        val index = displayJobsList.indexOf(job)
+        if (index >= 0) {
+            Log.d("SwipeableJobCards", "Immediately removing job ${job.id} at index $index from display list")
+            displayJobsList.removeAt(index)
+
+            // Adjust current index if needed
+            if (index <= currentIndex && currentIndex > 0) {
+                currentIndex--
+            }
+
+            // Make sure currentIndex stays valid
+            if (currentIndex >= displayJobsList.size && displayJobsList.isNotEmpty()) {
+                currentIndex = displayJobsList.size - 1
+            }
+        } else {
+            Log.e("SwipeableJobCards", "Could not find job ${job.id} in display list to remove")
+        }
+
+        // Mark job as applied in the repository
+        processedJobsViewModel.markJobAsApplied(job.id)
+
+        // Also add to session processed jobs to ensure it doesn't show up again this session
+        // Also add to session processed jobs to ensure it doesn't show up again this session
+        processedJobsViewModel.addToSessionProcessedJobs(job.id)
+        // Call the backend API
         jobViewModel.applyForJob(job.id)
 
-        // Show confetti animation
+        // UI feedback
         showAcceptConfetti = true
-
-        // Call the accept callback
         onJobAccepted(job)
         triggerVibration()
 
-        // Set job to be processed by the LaunchedEffect
+        // Set job for additional processing by LaunchedEffect if needed
         jobToProcess = job
         jobProcessAction = "accept"
+
+        // Refresh job history
+        jobHistoryViewModel?.refreshApplicationHistory()
+
+        // Debug logs to help track what's happening
+        Log.d("SwipeableJobCards", "After swipe right - Display jobs count: ${displayJobsList.size}")
+        Log.d("SwipeableJobCards", "After swipe right - Current index: $currentIndex")
+        if (currentIndex < displayJobsList.size) {
+            Log.d("SwipeableJobCards", "After swipe right - Next job ID: ${displayJobsList[currentIndex].id}")
+        } else {
+            Log.d("SwipeableJobCards", "After swipe right - No more jobs to display")
+        }
+        Log.d("SwipeableJobCards", "After swipe right - Session processed job count: ${processedJobsViewModel.sessionProcessedJobIds.value.size}")
+    }
+
+    // ===== SIDE EFFECTS =====
+    LaunchedEffect(jobViewModel.featuredJobs.collectAsState().value) {
+        val featuredJobs = jobViewModel.featuredJobs.value
+        if (featuredJobs.isNotEmpty()) {
+            Log.d("SwipeableJobCards", "Jobs updated from ViewModel. Refreshing display list with ${featuredJobs.size} jobs")
+            displayJobsList.clear()
+
+            val filteredJobs = featuredJobs.filter { job ->
+                !sessionProcessedJobIds.contains(job.id)
+            }.distinctBy { it.id }
+
+            displayJobsList.addAll(filteredJobs)
+
+            if (displayJobsList.isNotEmpty()) {
+                currentIndex = 0
+            }
+        }
+    }
+
+    // Debug logs to help track what's happening
+    LaunchedEffect(displayJobsList.size, currentIndex) {
+        Log.d("SwipeableJobCards", "Display jobs count: ${displayJobsList.size}, Current index: $currentIndex")
+        Log.d("SwipeableJobCards", "Processed job IDs: $processedJobIds")
+    }
+
+    // Effect to preserve state during navigation
+    DisposableEffect(Unit) {
+        // This runs on component creation
+        Log.d("SwipeableJobCards", "Component initialized with ${displayJobsList.size} jobs")
+        Log.d("SwipeableJobCards", "Starting with ${processedJobIds.size} processed jobs")
+
+        onDispose {
+            // This code runs when the composable is removed from composition (navigation away)
+            Log.d("SwipeableJobCards", "Component is being disposed but preserving state of ${processedJobIds.size} processed jobs")
+        }
     }
 
     // Effect to handle job processing after swipe events
@@ -259,21 +336,15 @@ fun SwipeableJobCards(
         delay(300)
 
         try {
-            // Find the job in the display list
+            // We don't need to remove the job from the display list here anymore
+            // since we now do it immediately in the handleSwipe methods
+
+            // However, we can still use this to handle any additional processing
+            // or to recover from any state inconsistencies
             val index = displayJobsList.indexOfFirst { it.id == job.id }
-
             if (index >= 0) {
-                Log.d("SwipeableJobCards", "Removing ${jobProcessAction}ed job ${job.id} at index $index")
+                Log.d("SwipeableJobCards", "Job ${job.id} is still in display list after ${jobProcessAction}. Removing it now.")
                 displayJobsList.removeAt(index)
-
-                // If we've removed all jobs, we're done
-                if (displayJobsList.isEmpty()) {
-                    Log.d("SwipeableJobCards", "No more jobs after ${jobProcessAction}")
-                    // Clear the job to process to prevent further processing
-                    jobToProcess = null
-                    jobProcessAction = ""
-                    return@LaunchedEffect
-                }
 
                 // Adjust the current index if needed
                 if (index <= currentIndex && currentIndex > 0) {
@@ -281,16 +352,12 @@ fun SwipeableJobCards(
                 }
 
                 // Make sure currentIndex is valid
-                if (currentIndex >= displayJobsList.size) {
+                if (currentIndex >= displayJobsList.size && displayJobsList.isNotEmpty()) {
                     currentIndex = displayJobsList.size - 1
                 }
-
-                Log.d("SwipeableJobCards", "After job removal: jobs=${displayJobsList.size}, currentIndex=$currentIndex")
-            } else {
-                Log.e("SwipeableJobCards", "Could not find job ${job.id} to remove after ${jobProcessAction}")
             }
         } catch (e: Exception) {
-            Log.e("SwipeableJobCards", "Error removing job after ${jobProcessAction}: ${e.message}")
+            Log.e("SwipeableJobCards", "Error in post-processing for job ${job.id}: ${e.message}")
         }
 
         // Clear the job to process to prevent further processing
@@ -316,155 +383,204 @@ fun SwipeableJobCards(
         }
     }
 
+    // ===== MAIN UI LAYOUT =====
+    // SINGLE BOX FOR ALL UI CONTENT
     Box(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        if (displayJobsList.isEmpty()) {
-            // No more jobs to show
-            NoMoreJobsCard(
-                onResetClick = {
-                    // Reset by recreating the display jobs list, but maintain processed job IDs
-                    displayJobsList.clear()
-                    val unprocessedJobs = jobs.filter { !processedJobIds.contains(it.id) }.distinctBy { it.id }
-                    displayJobsList.addAll(unprocessedJobs)
-                    Log.d("SwipeableJobCards", "Reset display jobs. New count: ${displayJobsList.size} unprocessed jobs")
-                    Log.d("SwipeableJobCards", "Still preserving ${processedJobIds.size} processed job IDs")
-
-                    if (displayJobsList.isNotEmpty()) {
-                        currentIndex = 0
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(0.85f)
-            )
-        } else {
-            // Show confetti animation if accepting a job
-            if (showAcceptConfetti) {
-                val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.confetti))
-                val progress by animateLottieCompositionAsState(
-                    composition = composition,
-                    iterations = 1
-                )
-
-                LottieAnimation(
-                    composition = composition,
-                    progress = { progress },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .zIndex(30f) // Ensure confetti is on top
-                )
-            }
-
-            // Ensure current index is valid
-            val validCurrentIndex = currentIndex.coerceIn(0, displayJobsList.size - 1)
-            if (validCurrentIndex != currentIndex) {
-                currentIndex = validCurrentIndex
-            }
-
-            // Get the top card (current index) and next card if available
-            val topCardJob = if (currentIndex < displayJobsList.size) displayJobsList[currentIndex] else null
-            val nextCardJob = if (currentIndex + 1 < displayJobsList.size) displayJobsList[currentIndex + 1] else null
-
-            // Check if the topCardJob is already processed (should not happen with our new filtering)
-            LaunchedEffect(topCardJob) {
-                if (topCardJob != null && processedJobIds.contains(topCardJob.id)) {
-                    Log.e("SwipeableJobCards", "Top card job ${topCardJob.id} is already processed! This should not happen.")
-                    // Remove this job and update the index
-                    val index = displayJobsList.indexOf(topCardJob)
-                    if (index >= 0) {
-                        displayJobsList.removeAt(index)
-                        if (displayJobsList.isEmpty()) {
-                            return@LaunchedEffect
-                        }
-                        if (currentIndex >= displayJobsList.size) {
-                            currentIndex = displayJobsList.size - 1
-                        }
-                    }
-                }
-            }
-
-            // Draw the next card (background) first if available
-            nextCardJob?.let { nextJob ->
-                val employerName = jobsWithEmployers.find { it.job.id == nextJob.id }?.employerName ?: "Unknown Employer"
-
-                key(nextJob.id) {
-                    StaticJobCard(
-                        job = nextJob,
-                        employerName = employerName,
-                        modifier = Modifier
-                            .fillMaxWidth(0.85f)
-                            .offset(y = (-10).dp)
-                            .scale(0.95f)
-                            .zIndex(1f) // Background card
-                    )
-                }
-            }
-
-            // Draw the top card last (foreground)
-            topCardJob?.let { topJob ->
-                val employerName = jobsWithEmployers.find { it.job.id == topJob.id }?.employerName ?: "Unknown Employer"
-
-                key(topJob.id) {
-                    Log.d("SwipeableJobCards", "Rendering top card for job: ${topJob.id}")
-                    SwipeableJobCard(
-                        job = topJob,
-                        employerName = employerName,
-                        onSwipeLeft = { handleSwipeLeft(topJob) },
-                        onSwipeRight = { handleSwipeRight(topJob) },
-                        onCardClick = {
-                            Log.d("SwipeableJobCards", "Card click detected for job: ${topJob.id}")
-                            selectedJob = topJob
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth(0.85f)
-                            .zIndex(10f) // Top card gets highest z-index
-                    )
-                }
-            }
-
-            // Action buttons
-            Row(
+        // Top banner indicator for rejected jobs mode
+        AnimatedVisibility(
+            visible = isShowingRejectedJobs,
+            enter = fadeIn() + slideInVertically { -it },
+            exit = fadeOut() + slideOutVertically { -it }
+        ) {
+            Box(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(16.dp)
-                    .zIndex(20f), // Buttons should be on top of everything
-                horizontalArrangement = Arrangement.spacedBy(48.dp)
+                    .fillMaxWidth()
+                    .background(Color(0xFFFFA000))
+                    .padding(vertical = 6.dp)
+                    .align(Alignment.TopCenter)
+                    .zIndex(20f)
             ) {
-                // Only show buttons if there are jobs to interact with
-                if (topCardJob != null) {
-                    FloatingActionButton(
-                        onClick = {
-                            topCardJob.let { job ->
-                                Log.d("SwipeableJobCards", "Reject button clicked for job: ${job.id}")
-                                handleSwipeLeft(job)
-                            }
-                        },
-                        containerColor = Color.White,
-                        contentColor = Color.Red,
-                        modifier = Modifier.size(56.dp)
-                    ) {
-                        Icon(Icons.Default.Close, "Reject", Modifier.size(30.dp))
-                    }
+                Text(
+                    text = "Reconsidering previously rejected jobs",
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
 
-                    FloatingActionButton(
-                        onClick = {
-                            topCardJob.let { job ->
-                                Log.d("SwipeableJobCards", "Accept button clicked for job: ${job.id}")
-                                handleSwipeRight(job)
+        // CONDITIONAL CONTENT BASED ON STATE
+        when {
+            // No jobs at all - show empty placeholder
+            jobs.isEmpty() && !hasProcessedJobs -> {
+                EmptyJobsPlaceholder(modifier = Modifier.fillMaxWidth(0.85f))
+            }
+
+            // No more jobs to display - show the "look again" card
+            displayJobsList.isEmpty() || currentIndex >= displayJobsList.size -> {
+                NoMoreJobsCard(
+                    onResetClick = {
+                        // Reset the display list with ALL jobs
+                        displayJobsList.clear()
+                        Log.d("SwipeableJobCards", "Total jobs available to show: ${jobs.size}")
+
+                        // Filter out session processed jobs when adding
+                        val filteredJobs = jobs.filter { job ->
+                            !sessionProcessedJobIds.contains(job.id)
+                        }.distinctBy { it.id }
+
+                        displayJobsList.addAll(filteredJobs)
+
+                        Log.d("SwipeableJobCards", "Reset display jobs. New count: ${displayJobsList.size} jobs")
+
+                        if (displayJobsList.isNotEmpty()) {
+                            currentIndex = 0
+                        }
+                    },
+                    jobViewModel = jobViewModel,
+                    processedJobsViewModel = processedJobsViewModel,
+                    modifier = Modifier.fillMaxWidth(0.85f)
+                )
+            }
+
+            // Have jobs to display - show cards and buttons
+            else -> {
+                // Show confetti animation if accepting a job
+                if (showAcceptConfetti) {
+                    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.confetti))
+                    val progress by animateLottieCompositionAsState(
+                        composition = composition,
+                        iterations = 1
+                    )
+
+                    LottieAnimation(
+                        composition = composition,
+                        progress = { progress },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(30f) // Ensure confetti is on top
+                    )
+                }
+
+                // Ensure current index is valid
+                val validCurrentIndex = currentIndex.coerceIn(0, displayJobsList.size - 1)
+                if (validCurrentIndex != currentIndex) {
+                    currentIndex = validCurrentIndex
+                }
+
+                // Get the top card (current index) and next card if available
+                val topCardJob = if (currentIndex < displayJobsList.size) displayJobsList[currentIndex] else null
+                val nextCardJob = if (currentIndex + 1 < displayJobsList.size) displayJobsList[currentIndex + 1] else null
+
+                // Check if the topCardJob is already processed (should not happen with our new filtering)
+                LaunchedEffect(topCardJob) {
+                    if (topCardJob != null &&
+                        sessionProcessedJobIds.contains(topCardJob.id) &&
+                        !isShowingRejectedJobs)
+                    {
+                        Log.e("SwipeableJobCards", "Top card job ${topCardJob.id} is already processed! This should not happen.")
+                        // Remove this job and update the index
+                        val index = displayJobsList.indexOf(topCardJob)
+                        if (index >= 0) {
+                            displayJobsList.removeAt(index)
+                            if (displayJobsList.isEmpty()) {
+                                return@LaunchedEffect
                             }
-                        },
-                        containerColor = Color.White,
-                        contentColor = PrimaryBlue,
-                        modifier = Modifier.size(56.dp)
-                    ) {
-                        Icon(Icons.Default.Favorite, "Accept", Modifier.size(30.dp))
+                            if (currentIndex >= displayJobsList.size) {
+                                currentIndex = displayJobsList.size - 1
+                            }
+                        }
+                    }
+                }
+
+                // Draw the next card (background) first if available
+                nextCardJob?.let { nextJob ->
+                    val employerName = jobsWithEmployers.find { it.job.id == nextJob.id }?.employerName ?: "Unknown Employer"
+
+                    key(nextJob.id) {
+                        StaticJobCard(
+                            job = nextJob,
+                            employerName = employerName,
+                            modifier = Modifier
+                                .fillMaxWidth(0.85f)
+                                .offset(y = (-10).dp)
+                                .scale(0.95f)
+                                .zIndex(1f) // Background card
+                        )
+                    }
+                }
+
+                // Draw the top card last (foreground)
+                topCardJob?.let { topJob ->
+                    val employerName = jobsWithEmployers.find { it.job.id == topJob.id }?.employerName ?: "Unknown Employer"
+
+                    key(topJob.id) {
+                        Log.d("SwipeableJobCards", "Rendering top card for job: ${topJob.id}")
+                        SwipeableJobCard(
+                            job = topJob,
+                            employerName = employerName,
+                            onSwipeLeft = { handleSwipeLeft(topJob) },
+                            onSwipeRight = { handleSwipeRight(topJob) },
+                            onCardClick = {
+                                Log.d("SwipeableJobCards", "Card click detected for job: ${topJob.id}")
+                                selectedJob = topJob
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth(0.85f)
+                                .zIndex(10f) // Top card gets highest z-index
+                        )
+                    }
+                }
+
+                // Action buttons
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp)
+                        .zIndex(20f), // Buttons should be on top of everything
+                    horizontalArrangement = Arrangement.spacedBy(48.dp)
+                ) {
+                    // Only show buttons if there are jobs to interact with
+                    if (topCardJob != null) {
+                        FloatingActionButton(
+                            onClick = {
+                                topCardJob.let { job ->
+                                    Log.d("SwipeableJobCards", "Reject button clicked for job: ${job.id}")
+                                    handleSwipeLeft(job)
+                                }
+                            },
+                            containerColor = Color.White,
+                            contentColor = Color.Red,
+                            modifier = Modifier.size(56.dp)
+                        ) {
+                            Icon(Icons.Default.Close, "Reject", Modifier.size(30.dp))
+                        }
+
+                        FloatingActionButton(
+                            onClick = {
+                                topCardJob.let { job ->
+                                    Log.d("SwipeableJobCards", "Accept button clicked for job: ${job.id}")
+                                    handleSwipeRight(job)
+                                }
+                            },
+                            containerColor = Color.White,
+                            contentColor = PrimaryBlue,
+                            modifier = Modifier.size(56.dp)
+                        ) {
+                            Icon(Icons.Default.Favorite, "Accept", Modifier.size(30.dp))
+                        }
                     }
                 }
             }
         }
     }
 
-    // Full screen job details dialog
+    // Full screen job details dialog (outside the Box)
     AnimatedVisibility(
         visible = selectedJob != null,
         enter = slideInVertically { it } + fadeIn(),
@@ -478,8 +594,8 @@ fun SwipeableJobCards(
                     selectedJob = null
                 },
                 onApply = {
-                    // Add to processed set using the ViewModel
-                    processedJobsViewModel.addProcessedJob(job.id)
+                    // Mark job as applied in the repository
+                    processedJobsViewModel.markJobAsApplied(job.id)
 
                     // Apply for the job using the ViewModel
                     jobViewModel.applyForJob(job.id)
@@ -497,8 +613,8 @@ fun SwipeableJobCards(
                     jobProcessAction = "accept"
                 },
                 onReject = {
-                    // Add to processed set using the ViewModel
-                    processedJobsViewModel.addProcessedJob(job.id)
+                    // Mark job as rejected in the repository
+                    processedJobsViewModel.markJobAsRejected(job.id)
 
                     // Mark the job as not interested using the ViewModel
                     jobViewModel.markJobAsNotInterested(job.id)
@@ -516,6 +632,110 @@ fun SwipeableJobCards(
         }
     }
 }
+
+@Composable
+fun NoMoreJobsCard(
+    onResetClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    jobViewModel: JobViewModel = hiltViewModel(),
+    processedJobsViewModel: ProcessedJobsViewModel = hiltViewModel(),
+    jobHistoryViewModel: JobHistoryViewModel? = hiltViewModel()
+) {
+    val isShowingRejectedJobs by processedJobsViewModel.isShowingRejectedJobs.collectAsState()
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = if (isShowingRejectedJobs)
+                    "No more rejected jobs to reconsider"
+                else
+                    "You've seen all available jobs",
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = if (isShowingRejectedJobs)
+                    "You've reviewed all your previously rejected jobs"
+                else
+                    "Check back later for new job opportunities",
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (isShowingRejectedJobs) {
+                // SHOWING REJECTED JOBS - Show button to go back to regular job search
+                Button(
+                    onClick = {
+                        Log.d("SwipeableJobCards", "Back to Job Search clicked.")
+
+                        // Set the showing rejected jobs flag to false in the repository
+                        processedJobsViewModel.setShowingRejectedJobs(false)
+
+                        // Get new unprocessed jobs
+                        val district = jobViewModel.employeeProfile.value?.district ?: ""
+                        jobViewModel.getJobsByDistrict(district)
+
+                        // Reset the card display
+                        onResetClick()
+
+                        // Refresh job history
+                        jobHistoryViewModel?.refreshApplicationHistory()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryBlue
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Back to Job Search")
+                }
+            } else {
+                // NORMAL MODE - Only show reconsider rejected jobs option
+                Button(
+                    onClick = {
+                        Log.d("SwipeableJobCards", "Reconsider Rejected Jobs clicked.")
+
+                        // Set the showing rejected jobs flag to true in the repository
+                        // This will automatically clear session processed jobs in the repository
+                        processedJobsViewModel.setShowingRejectedJobs(true)
+
+                        // Get rejected jobs
+                        val district = jobViewModel.employeeProfile.value?.district ?: ""
+                        jobViewModel.getOnlyRejectedJobs(district)
+
+                        // Reset the card display
+                        onResetClick()
+
+                        // Refresh job history
+                        jobHistoryViewModel?.refreshApplicationHistory()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryBlue
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Reconsider Rejected Jobs")
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 fun StaticJobCard(
@@ -594,48 +814,6 @@ fun EmptyJobsPlaceholder(modifier: Modifier = Modifier) {
         }
     }
 }
-
-@Composable
-fun NoMoreJobsCard(
-    onResetClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(400.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "You've seen all jobs!",
-                style = MaterialTheme.typography.headlineMedium,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Check back later for new opportunities",
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Button(onClick = onResetClick) {
-                Text("Look Again")
-            }
-        }
-    }
-}
-
 @Composable
 fun FullScreenJobDetailsDialog(
     job: Job,

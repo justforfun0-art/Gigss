@@ -1,59 +1,40 @@
 package com.example.gigs.viewmodel
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 
 /**
  * ViewModel to expose processed job IDs from the repository
  */
+
 @HiltViewModel
 class ProcessedJobsViewModel @Inject constructor(
-    private val processedJobsRepository: ProcessedJobsRepository
+    private val repository: ProcessedJobsRepository
 ) : ViewModel() {
+    // Simply expose all repository state flows
+    val processedJobIds = repository.processedJobIds
+    val sessionProcessedJobIds = repository.sessionProcessedJobIds
+    val appliedJobIds = repository.appliedJobIds
+    val rejectedJobIds = repository.rejectedJobIds
+    val isShowingRejectedJobs = repository.isShowingRejectedJobs
 
-    // Expose the repository's StateFlow
-    val processedJobIds = processedJobsRepository.processedJobIds
-
-    /**
-     * Add a job ID to the set of processed jobs
-     */
-    fun addProcessedJob(jobId: String) {
-        processedJobsRepository.addProcessedJob(jobId)
-    }
-
-    /**
-     * Add multiple job IDs to the set of processed jobs
-     */
-    fun addProcessedJobs(jobIds: Collection<String>) {
-        processedJobsRepository.addProcessedJobs(jobIds)
-    }
-
-    /**
-     * Check if a job ID has been processed
-     */
-    fun isJobProcessed(jobId: String): Boolean {
-        return processedJobsRepository.isJobProcessed(jobId)
-    }
-
-    /**
-     * Get all processed job IDs
-     */
-    fun getProcessedJobIds(): Set<String> {
-        return processedJobsRepository.getProcessedJobIds()
-    }
-
-    /**
-     * Clear all processed job IDs
-     */
-    fun clearProcessedJobs() {
-        processedJobsRepository.clearProcessedJobs()
-    }
-
-    /**
-     * Initialize with rejected and applied job IDs
-     */
-    fun initializeWithExistingJobIds(appliedJobIds: Set<String>, rejectedJobIds: Set<String>) {
-        processedJobsRepository.initializeWithExistingJobIds(appliedJobIds, rejectedJobIds)
+    // Delegate all actions to the repository
+    fun markJobAsApplied(jobId: String) = repository.markJobAsApplied(jobId)
+    fun markJobAsRejected(jobId: String) = repository.markJobAsRejected(jobId)
+    fun setShowingRejectedJobs(showing: Boolean) = repository.setShowingRejectedJobs(showing)
+    fun clearSessionProcessedJobs() = repository.clearSessionProcessedJobs()
+    fun isJobProcessedInCurrentSession(jobId: String) = repository.isJobProcessedInCurrentSession(jobId)
+    fun isJobApplied(jobId: String) = repository.isJobApplied(jobId)
+    fun isJobRejected(jobId: String) = repository.isJobRejected(jobId)
+    fun addToSessionProcessedJobs(jobId: String) {
+        val current = sessionProcessedJobIds.value.toMutableSet()
+        current.add(jobId)
+        repository.updateSessionProcessedJobs(current)
     }
 }

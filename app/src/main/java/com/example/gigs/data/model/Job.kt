@@ -165,3 +165,23 @@ data class DashboardData(
     @SerialName("recent_applications")
     val recentApplications: List<ApplicationWithJob> = emptyList()
 )
+
+
+@Serializable
+data class Application(
+    val id: String = "",
+
+    @SerialName("job_id")
+    val jobId: String = "",
+
+    @SerialName("employee_id")
+    val employeeId: String = "",
+
+    val status: String = "APPLIED",
+
+    @SerialName("created_at")
+    val createdAt: String? = null,
+
+    @SerialName("updated_at")
+    val updatedAt: String? = null
+)

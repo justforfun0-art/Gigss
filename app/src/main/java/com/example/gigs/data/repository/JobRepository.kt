@@ -20,10 +20,14 @@ import kotlinx.serialization.json.Json
 import android.util.Log
 import com.example.gigs.BuildConfig
 import com.example.gigs.GigsApp
+import com.example.gigs.data.model.Application
+import com.example.gigs.viewmodel.ProcessedJobsRepository
 import io.github.jan.supabase.annotations.SupabaseExperimental
+import io.ktor.network.tls.TLSRecordType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import kotlinx.datetime.LocalDateTime
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.serialization.json.buildJsonObject
@@ -31,11 +35,28 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.encodeToJsonElement
+import java.util.UUID
+import kotlinx.datetime.Clock
+import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+// For Kotlin collections
+import kotlin.collections.*
+
+// For Flow and coroutines
+import kotlinx.coroutines.flow.flow
+import java.io.FileDescriptor.`in`
+import java.lang.System.`in`
+
+// For Result wrapper
+import kotlin.Result
+
+
 
 @Singleton
 class JobRepository @Inject constructor(
     private val supabaseClient: SupabaseClient,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val processedJobsRepository: ProcessedJobsRepository,
+    private val applicationRepository: ApplicationRepository
 ) {
     private val TAG = "JobRepository"
 
@@ -524,11 +545,227 @@ class JobRepository @Inject constructor(
         }
     }
 
-    suspend fun markJobAsNotInterested(jobId: String): Flow<Result<Boolean>> {
-        // Store in local preferences or remote database that user is not interested in this job
-        // Return Result.success(true) if successful
-        return flow { emit(Result.success(true)) }
+    @OptIn(SupabaseExperimental::class)
+    suspend fun markJobAsNotInterested(jobId: String): Flow<Result<Boolean>> = flow {
+        try {
+            Log.d(TAG, "Marking job as not interested: $jobId")
+
+            val userId = authRepository.getCurrentUserId()
+            if (userId == null) {
+                Log.e(TAG, "User not logged in")
+                emit(Result.failure(Exception("User not logged in")))
+                return@flow
+            }
+
+            try {
+                // Check if application exists
+                val existingApplications = supabaseClient
+                    .table("applications")
+                    .select {
+                        filter {
+                            eq("employee_id", userId)
+                            eq("job_id", jobId)
+                        }
+                    }
+                    .decodeList<Application>()
+
+                val exists = existingApplications.isNotEmpty()
+
+                if (exists) {
+                    // Update status to REJECTED
+                    supabaseClient
+                        .table("applications")
+                        .update({
+                            set("status", "REJECTED")
+                            set("updated_at", Clock.System.now().toString())
+                        }) {
+                            filter {
+                                eq("employee_id", userId)
+                                eq("job_id", jobId)
+                            }
+                        }
+
+                    Log.d(TAG, "Updated existing application to REJECTED status")
+                } else {
+                    // Insert new REJECTED application
+                    val timestamp = Clock.System.now().toString()
+                    val applicationId = UUID.randomUUID().toString()
+
+                    // Create application using your existing model
+                    val application = Application(
+                        id = applicationId,
+                        jobId = jobId,
+                        employeeId = userId,
+                        status = "REJECTED",
+                        createdAt = timestamp,
+                        updatedAt = timestamp
+                    )
+
+                    supabaseClient
+                        .table("applications")
+                        .insert(application)
+
+                    Log.d(TAG, "Created new application with REJECTED status")
+                }
+
+                emit(Result.success(true))
+            } catch (e: Exception) {
+                Log.e(TAG, "Error creating/updating rejected application: ${e.message}", e)
+                emit(Result.failure(e))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error marking job as not interested: ${e.message}", e)
+            emit(Result.failure(e))
+        }
     }
+
+    suspend fun updateApplicationStatus(jobId: String, status: String): Result<Unit> {
+        return try {
+            val userId = authRepository.getCurrentUserId() ?: throw Exception("User not authenticated")
+
+            // Find the existing application
+            val existingApplications = supabaseClient
+                .table("applications")
+                .select {
+                    filter {
+                        eq("employee_id", userId)
+                        eq("job_id", jobId)
+                    }
+                }
+                .decodeList<Application>()
+
+            if (existingApplications.isNotEmpty()) {
+                // Update existing application status
+                supabaseClient
+                    .table("applications")
+                    .update({
+                        set("status", status)
+                        set("updated_at", Clock.System.now().toString())                    }) {
+                        filter {
+                            eq("employee_id", userId)
+                            eq("job_id", jobId)
+                        }
+                    }
+                Log.d(TAG, "Updated application status for job $jobId to $status")
+                Result.success(Unit)
+            } else {
+                // Create new application if not exist (shouldn't happen for rejected jobs)
+                val applicationId = UUID.randomUUID().toString()
+                supabaseClient
+                    .table("applications")
+                    .insert(
+                        Application(
+                            id = applicationId,
+                            jobId = jobId,          // Changed from job_id to jobId
+                            employeeId = userId,     // Changed from employee_id to employeeId
+                            status = status
+                        )
+                    )
+                Log.d(TAG, "Created new application for job $jobId with status $status")
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating application status: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Retrieve jobs that the user has previously rejected
+     */
+    // In JobRepository.kt
+    // Fix for JobRepository.kt
+    suspend fun getRejectedJobsDetails(district: String = ""): Flow<Result<List<Job>>> = flow {
+        try {
+            val userId = authRepository.getCurrentUserId() ?: throw Exception("User not authenticated")
+            Log.d(TAG, "Fetching rejected jobs for user: $userId")
+
+// Option 3: If we just want to see if we got any data, without counting
+            applicationRepository.getMyApplications().collect { applications ->
+                Log.d(TAG, "Fetched applications: $applications")
+            }
+
+            // Get ALL applications from Supabase again (fresh)
+            val allApplications = supabaseClient.client.postgrest["applications"]
+                .select {
+                    filter {
+                        eq("employee_id", userId)
+                    }
+                }
+                .decodeList<Application>()
+
+            Log.d(TAG, "Found ${allApplications.size} total applications for user")
+
+            // Group applications by job ID
+            val applicationsByJobId = allApplications.groupBy { it.jobId }
+
+            // Get all job IDs where the user has applied
+            val appliedJobIds = applicationsByJobId
+                .filter { (_, applications) ->
+                    applications.any { it.status == "APPLIED" }
+                }
+                .keys.toSet()
+
+            // Get rejected job IDs that are NOT in the applied set
+            val trulyRejectedJobIds = applicationsByJobId
+                .filter { (jobId, applications) ->
+                    !appliedJobIds.contains(jobId) &&
+                            applications.any { it.status == "REJECTED" }
+                }
+                .keys.toList()
+
+            // Sync with in-memory repository if available
+            if (processedJobsRepository != null) {
+                processedJobsRepository.updateRejectedJobIds(trulyRejectedJobIds.toSet())
+                processedJobsRepository.updateAppliedJobIds(appliedJobIds)
+
+                Log.d(TAG, "Synchronized repository state with ${trulyRejectedJobIds.size} rejected jobs and ${appliedJobIds.size} applied jobs")
+            }
+
+            Log.d(TAG, "Found ${trulyRejectedJobIds.size} truly rejected job IDs: $trulyRejectedJobIds")
+
+            if (trulyRejectedJobIds.isEmpty()) {
+                emit(Result.success(emptyList()))
+                return@flow
+            }
+
+            // Fetch matching jobs using IN filter
+            val jobs = supabaseClient.client.postgrest["jobs"]
+                .select {
+                    filter {
+                        if (trulyRejectedJobIds.isNotEmpty()) {
+                            // Format the IN clause properly for Supabase
+                            val inClause = trulyRejectedJobIds.joinToString(",", prefix = "(", postfix = ")")
+                            filter("id", FilterOperator.IN, inClause)
+                        } else {
+                            // If there are no rejected IDs, add a condition that will return no results
+                            eq("id", "no_matching_id")
+                        }
+
+                        eq("is_active", true)
+
+                        if (district.isNotBlank()) {
+                            or {
+                                ilike("district", "%$district%")
+                                ilike("location", "%$district%")
+                            }
+                        }
+                    }
+                    order("created_at", Order.DESCENDING)
+                }
+                .decodeList<Job>()
+
+
+            val jobIds = jobs.map { it.id }
+            Log.d(TAG, "Retrieved ${jobs.size} rejected job details with IDs: $jobIds")
+
+            emit(Result.success(jobs))
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching rejected jobs: ${e.message}", e)
+            emit(Result.failure(e))
+        }
+    }
+
 
     suspend fun getRejectedJobs(): Flow<Result<Set<String>>> {
         // Retrieve the set of job IDs the user has rejected

@@ -597,7 +597,7 @@ class EmployerApplicationsViewModel @Inject constructor(
     suspend fun updateApplicationStatus(applicationId: String, newStatus: String): Boolean {
         return try {
             val result = applicationRepository.updateApplicationStatus(applicationId, newStatus).first()
-            val success = result.isSuccess && result.getOrNull() == true
+            val success = result.isSuccess
 
             // Refresh the application list if the update was successful
             if (success) {

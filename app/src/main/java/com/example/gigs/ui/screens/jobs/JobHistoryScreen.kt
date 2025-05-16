@@ -77,6 +77,8 @@ fun JobHistoryScreen(
 
     LaunchedEffect(Unit) {
         viewModel.loadApplicationsHistory()
+        viewModel.refreshApplicationHistory()
+
     }
 
     Scaffold(
