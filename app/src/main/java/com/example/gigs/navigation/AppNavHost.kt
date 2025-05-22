@@ -477,6 +477,9 @@ fun AppNavHost(
                 },
                 onJobSelected = { jobId ->
                     navController.navigate(Screen.JobDetails.createRoute(jobId))
+                },
+                onBackPressed = {
+                    navController.popBackStack()
                 }
             )
         }

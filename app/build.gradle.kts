@@ -158,7 +158,9 @@ object Versions {
     const val hilt = "2.48"
     const val coroutines = "1.7.3"
     const val composeBom = "2024.02.00"
-    const val nav = "2.7.6"
+    const val nav = "2.8.0"
+    const val accompanist = "0.34.0" // New version constant
+
 }
 
 dependencies {
@@ -187,6 +189,8 @@ dependencies {
 
     // Navigation
     implementation("androidx.navigation:navigation-compose:${Versions.nav}")
+
+    implementation("com.google.accompanist:accompanist-navigation-animation:${Versions.accompanist}")
 
     // Google Play Services
     implementation("com.google.android.gms:play-services-location:21.0.1")
@@ -325,6 +329,7 @@ dependencies {
     debugImplementation(platform("androidx.compose:compose-bom:${Versions.composeBom}"))
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+
 }
 
 // Improve Kapt performance and error reporting

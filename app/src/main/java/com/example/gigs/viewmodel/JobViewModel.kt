@@ -15,8 +15,22 @@ import com.example.gigs.data.repository.ProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import androidx.lifecycle.viewModelScope
+import com.example.gigs.ui.screens.jobs.JobFilters
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+enum class SortOption {
+    DATE_NEWEST,
+    DATE_OLDEST,
+    SALARY_HIGH_LOW,
+    SALARY_LOW_HIGH,
+    ALPHABETICAL
+}
+
 
 @HiltViewModel
 class JobViewModel @Inject constructor(
@@ -55,6 +69,14 @@ class JobViewModel @Inject constructor(
     private val _employeeProfile = MutableStateFlow<EmployeeProfile?>(null)
     val employeeProfile: StateFlow<EmployeeProfile?> = _employeeProfile
 
+    private val _currentSortOption = MutableStateFlow(SortOption.DATE_NEWEST)
+    val currentSortOption: StateFlow<SortOption> = _currentSortOption
+
+    private val _jobFilters = MutableStateFlow(JobFilters())
+    val jobFilters: StateFlow<JobFilters> = _jobFilters
+
+
+
     // Use the repository's state for showing rejected jobs
     val isShowingRejectedJobs = processedJobsRepository.isShowingRejectedJobs
 
@@ -64,9 +86,148 @@ class JobViewModel @Inject constructor(
         loadRejectedJobs()
     }
 
-    fun setShowingRejectedJobs(showing: Boolean) {
-        processedJobsRepository.setShowingRejectedJobs(showing)
+
+    // Add these methods to your JobViewModel class
+    fun setSortOption(sortOption:SortOption) {
+        _currentSortOption.value = sortOption
+        // Apply sorting to current jobs
+        applyFiltersAndSort()
     }
+
+    fun setJobFilters(filters: JobFilters) {
+        _jobFilters.value = filters
+        // Apply filters to current jobs
+        applyFiltersAndSort()
+    }
+
+    // This applies both filters and sorting without making a new network request
+    private fun applyFiltersAndSort() {
+        viewModelScope.launch {
+            val allJobs = _jobs.value
+            val filters = _jobFilters.value
+            val sortOption = _currentSortOption.value
+
+            // First filter the jobs
+            val filteredJobs = applyFilters(allJobs, filters)
+
+            // Then sort the filtered jobs
+            val sortedJobs = applySorting(filteredJobs, sortOption)
+
+            // Update the jobs state flow with the result
+            _featuredJobs.value = sortedJobs
+        }
+    }
+
+    // Modify your existing getJobsByDistrict method to incorporate sorting and filtering
+    fun getJobsByDistrict(district: String, applyFiltersAndSort: Boolean = true) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                Log.d(TAG, "Getting jobs for district: $district")
+                jobRepository.getJobsByLocation(district).collect { result ->
+                    if (result.isSuccess) {
+                        val allJobs = result.getOrNull() ?: emptyList()
+                        Log.d(TAG, "Retrieved ${allJobs.size} jobs for district $district")
+
+                        // Get processed jobs from the repository
+                        val processedJobs = processedJobsRepository.getProcessedJobIds()
+
+                        // Filter out processed jobs
+                        val filteredJobs = allJobs.filter { job ->
+                            !processedJobs.contains(job.id)
+                        }
+
+                        _jobs.value = filteredJobs
+
+                        // If requested, apply the current filters and sorting
+                        if (applyFiltersAndSort) {
+                            val finalJobs = applySorting(
+                                applyFilters(filteredJobs, _jobFilters.value),
+                                _currentSortOption.value
+                            )
+                            _featuredJobs.value = finalJobs
+                        } else {
+                            _featuredJobs.value = filteredJobs
+                        }
+                    } else {
+                        Log.e(TAG, "Error: ${result.exceptionOrNull()?.message}")
+                        _jobs.value = emptyList()
+                        _featuredJobs.value = emptyList()
+                    }
+                    _isLoading.value = false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception: ${e.message}")
+                _isLoading.value = false
+                _jobs.value = emptyList()
+                _featuredJobs.value = emptyList()
+            }
+        }
+    }
+
+    // Helper methods for filtering and sorting
+    private fun applyFilters(jobs: List<Job>, filters: JobFilters): List<Job> {
+        return jobs.filter { job ->
+            var matches = true
+
+            // Filter by job type
+            if (filters.jobType != null && job.jobType != filters.jobType) {
+                matches = false
+            }
+
+            // Filter by salary range
+            val jobSalary = extractSalaryAverage(job.salaryRange)
+            if (jobSalary < filters.minSalary || jobSalary > filters.maxSalary) {
+                matches = false
+            }
+
+            // Filter by location
+            if (filters.location.isNotBlank() &&
+                !job.location.contains(filters.location, ignoreCase = true) &&
+                !job.district.contains(filters.location, ignoreCase = true) &&
+                !job.state.contains(filters.location, ignoreCase = true)) {
+                matches = false
+            }
+
+            // Filter by categories
+            if (filters.categories.isNotEmpty() &&
+                job.jobCategory?.let { !filters.categories.contains(it) } != false) {
+                matches = false
+            }
+
+            // Add other filters as needed
+
+            matches
+        }
+    }
+
+    private fun applySorting(jobs: List<Job>, sortOption: SortOption): List<Job> {
+        return when (sortOption) {
+            SortOption.DATE_NEWEST -> jobs.sortedByDescending { it.createdAt }
+            SortOption.DATE_OLDEST -> jobs.sortedBy { it.createdAt }
+            SortOption.SALARY_HIGH_LOW -> jobs.sortedByDescending { extractSalaryAverage(it.salaryRange) }
+            SortOption.SALARY_LOW_HIGH -> jobs.sortedBy { extractSalaryAverage(it.salaryRange) }
+            SortOption.ALPHABETICAL -> jobs.sortedBy { it.title }
+        }
+    }
+
+    private fun extractSalaryAverage(salaryRange: String?): Double {
+        if (salaryRange.isNullOrEmpty()) return 0.0
+
+        // Parse salary range like "₹500 - ₹1000" to get average
+        val numbers = salaryRange.replace("[^0-9-]".toRegex(), "")
+            .split("-")
+            .mapNotNull { it.trim().toDoubleOrNull() }
+
+        return if (numbers.size >= 2) {
+            (numbers[0] + numbers[1]) / 2
+        } else if (numbers.isNotEmpty()) {
+            numbers[0]
+        } else {
+            0.0
+        }
+    }
+
 
     // Add this function to load all jobs the user has applied to
     private fun loadUserApplications() {
@@ -90,24 +251,34 @@ class JobViewModel @Inject constructor(
     }
 
     // Load rejected jobs from local storage or remote database
+    // Load rejected jobs from remote database and sync with repository
     private fun loadRejectedJobs() {
         viewModelScope.launch {
             try {
-                jobRepository.getRejectedJobs().collect { result ->
+                // Use the new method to fetch and sync rejected jobs
+                jobRepository.fetchAndSyncRejectedJobs(processedJobsRepository).collect { result ->
                     if (result.isSuccess) {
-                        val jobIds = result.getOrNull() ?: emptySet()
+                        Log.d(TAG, "Successfully synced ${result.getOrNull()?.size ?: 0} rejected jobs")
+                    } else {
+                        Log.e(TAG, "Error syncing rejected jobs: ${result.exceptionOrNull()?.message}")
 
-                        // Update the repository instead of local state
-                        processedJobsRepository.initializeRejectedJobs(jobIds)
-
-                        Log.d(TAG, "Loaded ${jobIds.size} rejected job IDs")
+                        // Fallback to local data if remote fetch fails
+                        jobRepository.getRejectedJobs().collect { localResult ->
+                            if (localResult.isSuccess) {
+                                val jobIds = localResult.getOrNull() ?: emptySet()
+                                processedJobsRepository.initializeRejectedJobs(jobIds)
+                                Log.d(TAG, "Loaded ${jobIds.size} rejected job IDs from local storage")
+                            }
+                        }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error loading rejected jobs: ${e.message}")
+                Log.e(TAG, "Exception loading rejected jobs: ${e.message}")
             }
         }
     }
+
+
 
     fun getMyJobs(limit: Int = 10) {
         viewModelScope.launch {
@@ -242,7 +413,7 @@ class JobViewModel @Inject constructor(
 
                 // If we're in "reconsidering rejected jobs" mode, update existing application
                 if (processedJobsRepository.isShowingRejectedJobs.value) {
-                    applicationRepository.updateApplicationStatus(jobId, "APPLIED").collect { result ->
+                    applicationRepository.updateEmployeeApplicationStatus(jobId, "APPLIED").collect { result ->
                         handleApplicationResult(result, jobId)
                     }
                 } else {
@@ -260,7 +431,8 @@ class JobViewModel @Inject constructor(
     }
 
     // Helper method to avoid code duplication
-    private fun handleApplicationResult(result: Result<Any>, jobId: String) {
+    // Helper method to avoid code duplication
+    private suspend fun handleApplicationResult(result: Result<Any>, jobId: String) {
         if (result.isSuccess) {
             Log.d(TAG, "Successfully applied for job: $jobId")
 
@@ -273,13 +445,24 @@ class JobViewModel @Inject constructor(
             // Get the employee's district for refreshing
             val district = _employeeProfile.value?.district
 
-            // Refresh featured jobs to remove the applied one
-            if (!district.isNullOrBlank()) {
-                // If we have a district, get localized jobs
-                getLocalizedFeaturedJobs(district, _featuredJobs.value.size + 1)
+            // Check if we're in reconsidering rejected jobs mode
+            if (isShowingRejectedJobs.value) {
+                // If in rejected jobs mode, refresh the rejected jobs list
+                if (!district.isNullOrBlank()) {
+                    getOnlyRejectedJobs(district)
+                } else {
+                    // If district is not available, still try to refresh rejected jobs
+                    refreshRejectedJobs()
+                }
             } else {
-                // Otherwise use regular featured jobs
-                refreshFeaturedJobs()
+                // Otherwise refresh featured jobs to remove the applied one
+                if (!district.isNullOrBlank()) {
+                    // If we have a district, get localized jobs
+                    getLocalizedFeaturedJobs(district, _featuredJobs.value.size + 1)
+                } else {
+                    // Otherwise use regular featured jobs
+                    refreshFeaturedJobs()
+                }
             }
         } else {
             val errorMessage = result.exceptionOrNull()?.message ?: "Unknown error"
@@ -410,6 +593,7 @@ class JobViewModel @Inject constructor(
                     if (result.isSuccess) {
                         val allJobs = result.getOrNull() ?: emptyList()
                         Log.d(TAG, "Retrieved ${allJobs.size} jobs for district $district (no filtering)")
+                        _jobs.value = allJobs.take(limit)
 
                         // IMPORTANT: Don't filter processed jobs here!
                         _featuredJobs.value = allJobs.take(limit)
@@ -432,32 +616,103 @@ class JobViewModel @Inject constructor(
     /**
      * Get only jobs that the user has previously rejected
      */
+    /**
+     * Get only jobs that the user has previously rejected
+     */
     fun getOnlyRejectedJobs(district: String) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 Log.d(TAG, "Getting only rejected jobs for district: $district (isShowingRejectedJobs=${isShowingRejectedJobs.value})")
-                applicationRepository.getMyApplications().collect {
-                    // Update processed jobs after refresh
-                    processedJobsRepository.refreshSessionState()
-                jobRepository.getRejectedJobsDetails(district).collect { result ->
-                    if (result.isSuccess) {
-                        val rejectedJobs = result.getOrNull() ?: emptyList()
-                        Log.d(TAG, "Retrieved ${rejectedJobs.size} rejected jobs: ${rejectedJobs.map { it.id }}")
 
-                        // Update featured jobs with the rejected jobs
-                        _featuredJobs.value = rejectedJobs
+                // First fetch and sync rejected jobs from the server
+                jobRepository.fetchAndSyncRejectedJobs(processedJobsRepository).collect { syncResult ->
+                    if (syncResult.isSuccess) {
+                        Log.d(TAG, "Successfully synced rejected jobs from server")
+
+                        // Now get the details of rejected jobs for the specific district
+                        jobRepository.getRejectedJobsDetails(district).collect { result ->
+                            if (result.isSuccess) {
+                                val rejectedJobs = result.getOrNull() ?: emptyList()
+                                Log.d(TAG, "Retrieved ${rejectedJobs.size} rejected jobs: ${rejectedJobs.map { it.id }}")
+
+                                // Update featured jobs with the rejected jobs
+                                _featuredJobs.value = rejectedJobs
+                            } else {
+                                Log.e(TAG, "Error: ${result.exceptionOrNull()?.message}")
+                                _featuredJobs.value = emptyList()
+                            }
+                            _isLoading.value = false
+                        }
                     } else {
-                        Log.e(TAG, "Error: ${result.exceptionOrNull()?.message}")
-                        _featuredJobs.value = emptyList()
+                        Log.e(TAG, "Error syncing rejected jobs: ${syncResult.exceptionOrNull()?.message}")
+                        _isLoading.value = false
                     }
-                    _isLoading.value = false
-                }}
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Exception: ${e.message}")
                 _isLoading.value = false
                 _featuredJobs.value = emptyList()
             }
+        }
+    }
+
+    /**
+     * Refresh the rejected jobs list by fetching from server
+     */
+    fun refreshRejectedJobs() {
+        viewModelScope.launch {
+            try {
+                _isLoading.value = true
+                jobRepository.fetchAndSyncRejectedJobs(processedJobsRepository).collect { result ->
+                    _isLoading.value = false
+                    if (result.isSuccess) {
+                        Log.d(TAG, "Successfully refreshed rejected jobs")
+
+                        // If we're in rejected jobs mode, refresh the display
+                        if (isShowingRejectedJobs.value && _employeeProfile.value?.district != null) {
+                            getOnlyRejectedJobs(_employeeProfile.value!!.district!!)
+                        }
+                    } else {
+                        Log.e(TAG, "Error refreshing rejected jobs: ${result.exceptionOrNull()?.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                _isLoading.value = false
+                Log.e(TAG, "Exception refreshing rejected jobs: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun setShowingRejectedJobs(showing: Boolean) {
+        processedJobsRepository.setShowingRejectedJobs(showing)
+
+        // If switching to rejected jobs mode, refresh the data
+        if (showing) {
+            refreshRejectedJobs()
+        }
+    }
+    // Add these methods to the JobViewModel class
+    private fun updateJobInState(updatedJob: Job) {
+        _jobs.update { currentJobs ->
+            currentJobs.map { job ->
+                if (job.id == updatedJob.id) updatedJob else job
+            }
+        }
+    }
+
+    private fun updateFeaturedJobInState(updatedJob: Job) {
+        _featuredJobs.update { currentJobs ->
+            currentJobs.map { job ->
+                if (job.id == updatedJob.id) updatedJob else job
+            }
+        }
+    }
+
+    // Remove job from list without reloading
+    private fun removeJobFromFeaturedJobs(jobId: String) {
+        _featuredJobs.update { currentJobs ->
+            currentJobs.filter { it.id != jobId }
         }
     }
 

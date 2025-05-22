@@ -25,14 +25,14 @@ class ProcessedJobsViewModel @Inject constructor(
     val isShowingRejectedJobs = repository.isShowingRejectedJobs
 
     // Delegate all actions to the repository
-    fun markJobAsApplied(jobId: String) = repository.markJobAsApplied(jobId)
-    fun markJobAsRejected(jobId: String) = repository.markJobAsRejected(jobId)
-    fun setShowingRejectedJobs(showing: Boolean) = repository.setShowingRejectedJobs(showing)
-    fun clearSessionProcessedJobs() = repository.clearSessionProcessedJobs()
+    suspend fun markJobAsApplied(jobId: String) = repository.markJobAsApplied(jobId)
+    suspend fun markJobAsRejected(jobId: String) = repository.markJobAsRejected(jobId)
+    suspend fun setShowingRejectedJobs(showing: Boolean) = repository.setShowingRejectedJobs(showing)
+    suspend fun clearSessionProcessedJobs() = repository.clearSessionProcessedJobs()
     fun isJobProcessedInCurrentSession(jobId: String) = repository.isJobProcessedInCurrentSession(jobId)
     fun isJobApplied(jobId: String) = repository.isJobApplied(jobId)
     fun isJobRejected(jobId: String) = repository.isJobRejected(jobId)
-    fun addToSessionProcessedJobs(jobId: String) {
+    suspend fun addToSessionProcessedJobs(jobId: String) {
         val current = sessionProcessedJobIds.value.toMutableSet()
         current.add(jobId)
         repository.updateSessionProcessedJobs(current)

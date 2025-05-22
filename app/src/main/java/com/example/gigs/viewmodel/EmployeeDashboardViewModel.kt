@@ -1,5 +1,6 @@
 package com.example.gigs.viewmodel
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.gigs.data.model.Activity
@@ -16,6 +17,8 @@ import com.example.gigs.data.repository.DashboardRepository
 import com.example.gigs.data.repository.JobRepository
 import com.example.gigs.data.repository.ProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -212,6 +215,7 @@ class EmployeeDashboardViewModel @Inject constructor(
     }
 }
 
+
 @HiltViewModel
 class EmployerDashboardViewModel @Inject constructor(
     private val dashboardRepository: DashboardRepository,
@@ -219,25 +223,33 @@ class EmployerDashboardViewModel @Inject constructor(
     private val applicationRepository: ApplicationRepository,
     private val profileRepository: ProfileRepository
 ) : ViewModel() {
+    private val TAG = "EmployerDashboardVM"
+
+    // Dashboard data
     private val _dashboardData = MutableStateFlow<EmployerDashboardData?>(null)
     val dashboardData: StateFlow<EmployerDashboardData?> = _dashboardData
 
+    // Recent activities
     private val _recentActivities = MutableStateFlow<List<Activity>>(emptyList())
     val recentActivities: StateFlow<List<Activity>> = _recentActivities
 
+    // Recent jobs
     private val _recentJobs = MutableStateFlow<List<Job>>(emptyList())
     val recentJobs: StateFlow<List<Job>> = _recentJobs
 
+    // Location statistics
     private val _locationStats = MutableStateFlow<List<LocationStat>>(emptyList())
     val locationStats: StateFlow<List<LocationStat>> = _locationStats
 
+    // Category statistics
     private val _categoryStats = MutableStateFlow<List<CategoryStat>>(emptyList())
     val categoryStats: StateFlow<List<CategoryStat>> = _categoryStats
 
+    // Loading state
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
 
-    // For directly exposing the stats in the dashboard
+    // Dashboard statistics
     private val _totalJobs = MutableStateFlow(0)
     val totalJobs: StateFlow<Int> = _totalJobs
 
@@ -250,81 +262,163 @@ class EmployerDashboardViewModel @Inject constructor(
     private val _averageRating = MutableStateFlow(0.0f)
     val averageRating: StateFlow<Float> = _averageRating
 
-    // Added for employer profile
+    // Employer profile
     private val _employerProfile = MutableStateFlow<EmployerProfile?>(null)
     val employerProfile: StateFlow<EmployerProfile?> = _employerProfile
 
     private val _isProfileLoading = MutableStateFlow(false)
     val isProfileLoading: StateFlow<Boolean> = _isProfileLoading
 
+    /**
+     * Load all dashboard data in parallel using coroutines
+     */
     fun loadDashboardData() {
         viewModelScope.launch {
             _isLoading.value = true
 
-            // Load profile data
-            loadEmployerProfile()
-
-            // First load recent jobs - we'll use this to calculate stats directly
             try {
-                jobRepository.getMyJobs(50).collect { result ->
-                    if (result.isSuccess) {
-                        val jobs = result.getOrNull() ?: emptyList()
-                        _recentJobs.value = jobs.take(5)
+                // Run all data loading concurrently
+                coroutineScope {
+                    // Load profile data asynchronously
+                    val profileDeferred = async { loadEmployerProfile() }
 
-                        // Calculate stats directly from the jobs list
-                        calculateStatsFromJobs(jobs)
+                    // Create async tasks for all data loading operations
+                    val jobStatsDeferred = async { calculateJobStats() }
+                    val activitiesDeferred = async {
+                        try {
+                            dashboardRepository.getRecentActivities(5).first()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error loading activities: ${e.message}")
+                            Result.failure<List<Activity>>(e)
+                        }
+                    }
+                    val jobsDeferred = async {
+                        try {
+                            jobRepository.getMyJobs(5).first()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error loading jobs: ${e.message}")
+                            Result.failure<List<Job>>(e)
+                        }
+                    }
+                    val locationStatsDeferred = async {
+                        try {
+                            dashboardRepository.getApplicationsByLocation().first()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error loading location stats: ${e.message}")
+                            Result.failure<List<LocationStat>>(e)
+                        }
+                    }
+                    val categoryStatsDeferred = async {
+                        try {
+                            dashboardRepository.getApplicationsByCategory().first()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error loading category stats: ${e.message}")
+                            Result.failure<List<CategoryStat>>(e)
+                        }
+                    }
+                    val dashboardDataDeferred = async {
+                        try {
+                            dashboardRepository.getEmployerDashboardData().first()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error loading dashboard data: ${e.message}")
+                            Result.failure<EmployerDashboardData>(e)
+                        }
+                    }
 
-                        println("Found ${jobs.size} total jobs, set active jobs to ${_activeJobs.value}")
+                    // Wait for profile to load (we don't need to process its result here)
+                    profileDeferred.await()
+
+                    // Wait for job stats calculation to complete
+                    jobStatsDeferred.await()
+
+                    // Process activities result
+                    val activitiesResult = activitiesDeferred.await()
+                    if (activitiesResult.isSuccess) {
+                        _recentActivities.value = activitiesResult.getOrNull() ?: emptyList()
+                        Log.d(TAG, "Loaded ${_recentActivities.value.size} activities")
+                    }
+
+                    // Process jobs result
+                    val jobsResult = jobsDeferred.await()
+                    if (jobsResult.isSuccess) {
+                        _recentJobs.value = jobsResult.getOrNull() ?: emptyList()
+                        Log.d(TAG, "Loaded ${_recentJobs.value.size} recent jobs")
+                    }
+
+                    // Process location stats result
+                    val locationStatsResult = locationStatsDeferred.await()
+                    if (locationStatsResult.isSuccess) {
+                        _locationStats.value = locationStatsResult.getOrNull() ?: emptyList()
+                        Log.d(TAG, "Loaded ${_locationStats.value.size} location stats")
+                    }
+
+                    // Process category stats result
+                    val categoryStatsResult = categoryStatsDeferred.await()
+                    if (categoryStatsResult.isSuccess) {
+                        _categoryStats.value = categoryStatsResult.getOrNull() ?: emptyList()
+                        Log.d(TAG, "Loaded ${_categoryStats.value.size} category stats")
+                    }
+
+                    // Process dashboard data result
+                    val dashboardDataResult = dashboardDataDeferred.await()
+                    if (dashboardDataResult.isSuccess) {
+                        val dashboardData = dashboardDataResult.getOrNull()
+                        _dashboardData.value = dashboardData
+
+                        // Update our stats from the dashboard if available
+                        if (dashboardData != null) {
+                            // Only update average rating from dashboard data
+                            // (other stats are calculated more accurately in calculateJobStats)
+                            _averageRating.value = dashboardData.averageRating
+
+                            Log.d(TAG, "Loaded dashboard data with rating: ${dashboardData.averageRating}")
+                        }
                     }
                 }
             } catch (e: Exception) {
-                println("Error loading jobs: ${e.message}")
+                Log.e(TAG, "Error in loadDashboardData: ${e.message}", e)
+            } finally {
+                _isLoading.value = false
             }
-
-            // Load additional data without affecting our stats
-            loadAdditionalDashboardData()
         }
     }
 
     /**
-     * Load employer profile data
+     * Load employer profile data asynchronously
      */
-    private fun loadEmployerProfile() {
-        viewModelScope.launch {
-            _isProfileLoading.value = true
+    private suspend fun loadEmployerProfile() {
+        _isProfileLoading.value = true
 
-            try {
-                // Get current user ID from Firebase
-                val userId = profileRepository.firebaseAuthManager.getCurrentUserId()
+        try {
+            // Get current user ID from repository
+            val userId = profileRepository.firebaseAuthManager.getCurrentUserId()
 
-                if (userId != null) {
-                    // Query the database directly for employer profile
-                    getEmployerProfile(userId).collect { result ->
-                        if (result.isSuccess) {
-                            _employerProfile.value = result.getOrNull()
-                            println("Loaded employer profile: ${_employerProfile.value?.companyName}")
-                        } else {
-                            println("Failed to load employer profile: ${result.exceptionOrNull()?.message}")
-                        }
-                        _isProfileLoading.value = false
+            if (userId != null) {
+                // Query the database for employer profile
+                getEmployerProfile(userId).catch { e ->
+                    Log.e(TAG, "Error loading employer profile: ${e.message}", e)
+                }.collect { result ->
+                    if (result.isSuccess) {
+                        _employerProfile.value = result.getOrNull()
+                        Log.d(TAG, "Loaded employer profile: ${_employerProfile.value?.companyName}")
+                    } else {
+                        Log.e(TAG, "Failed to load employer profile: ${result.exceptionOrNull()?.message}")
                     }
-                } else {
-                    println("Error loading employer profile: User ID is null")
-                    _isProfileLoading.value = false
                 }
-            } catch (e: Exception) {
-                println("Exception in loadEmployerProfile: ${e.message}")
-                e.printStackTrace()
-                _isProfileLoading.value = false
+            } else {
+                Log.e(TAG, "Error loading employer profile: User ID is null")
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception in loadEmployerProfile: ${e.message}", e)
+        } finally {
+            _isProfileLoading.value = false
         }
     }
 
     /**
      * Get employer profile by user ID
-     * This internal method serves as a workaround for the missing repository method
      */
-    private fun getEmployerProfile(userId: String): Flow<Result<EmployerProfile>> = flow {
+    private fun getEmployerProfile(userId: String) = flow {
         try {
             val profile = profileRepository.supabaseClient
                 .table("employer_profiles")
@@ -346,119 +440,60 @@ class EmployerDashboardViewModel @Inject constructor(
     }
 
     /**
-     * Load additional dashboard data that doesn't affect our primary stats
+     * Calculate job statistics with parallel loading of application counts
      */
-    private fun loadAdditionalDashboardData() {
-        viewModelScope.launch {
-            try {
-                // Load recent activities
-                dashboardRepository.getRecentActivities(5).collect { result ->
-                    if (result.isSuccess) {
-                        _recentActivities.value = result.getOrNull() ?: emptyList()
-                    }
-                }
-            } catch (e: Exception) {
-                println("Error loading activities: ${e.message}")
-            }
-
-            try {
-                // Load location stats
-                dashboardRepository.getApplicationsByLocation().collect { result ->
-                    if (result.isSuccess) {
-                        _locationStats.value = result.getOrNull() ?: emptyList()
-                    }
-                }
-            } catch (e: Exception) {
-                println("Error loading location stats: ${e.message}")
-            }
-
-            try {
-                // Load category stats
-                dashboardRepository.getApplicationsByCategory().collect { result ->
-                    if (result.isSuccess) {
-                        _categoryStats.value = result.getOrNull() ?: emptyList()
-                    }
-                }
-            } catch (e: Exception) {
-                println("Error loading category stats: ${e.message}")
-            }
-
-            // For additional data that might be in the dashboard, load it last
-            try {
-                dashboardRepository.getEmployerDashboardData().collect { result ->
-                    if (result.isSuccess) {
-                        val dashboardData = result.getOrNull()
-                        _dashboardData.value = dashboardData
-
-                        // Only update rating from dashboard
-                        if (dashboardData != null) {
-                            _averageRating.value = dashboardData.averageRating
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                println("Error loading dashboard data: ${e.message}")
-            }
-
-            _isLoading.value = false
-        }
-    }
-
-    /**
-     * Calculate stats directly from a list of jobs
-     * This method doesn't use Flow so it avoids the Flow exception issues
-     */
-    private suspend fun calculateStatsFromJobs(jobs: List<Job>) {
+    private suspend fun calculateJobStats() {
         try {
-            // Debug output
-            println("Calculating stats from ${jobs.size} jobs")
-            jobs.forEach { job ->
-                println("Job ${job.id}: title=${job.title}, status=${job.status}")
-            }
+            // Get all jobs to count
+            val jobsResult = jobRepository.getMyJobs(0).first()
+            if (jobsResult.isSuccess) {
+                val jobs = jobsResult.getOrNull() ?: emptyList()
 
-            // Update job counts
-            _totalJobs.value = jobs.size
+                // Update job counts
+                _totalJobs.value = jobs.size
 
-            // Count active jobs
-            val activeCount = jobs.count { job ->
-                val isActive = when {
-                    // Try multiple approaches to find active jobs
-                    job.status.toString().equals("APPROVED", ignoreCase = true) -> true
-                    job.status == JobStatus.APPROVED -> true
-                    job.isActive == true -> true
-                    else -> false
+                // Count active jobs with reliable detection of status
+                _activeJobs.value = jobs.count { job ->
+                    when {
+                        job.status?.name.equals("APPROVED", true) -> true
+                        job.status == JobStatus.APPROVED -> true
+                        job.isActive == true -> true
+                        else -> false
+                    }
                 }
-                println("Job ${job.id}: isActive = $isActive")
-                isActive
-            }
-            _activeJobs.value = activeCount
 
-            // Count applications for each job and sum them up
-            var totalApplications = 0
-            for (job in jobs) {
-                try {
-                    // Use catch operator to prevent Flow exceptions from propagating
-                    applicationRepository.getApplicationsForJob(job.id)
-                        .catch { e ->
-                            println("Error fetching applications for job ${job.id}: ${e.message}")
-                        }
-                        .collect { result ->
-                            if (result.isSuccess) {
-                                val applications = result.getOrNull() ?: emptyList()
-                                println("Job ${job.id}: found ${applications.size} applications")
-                                totalApplications += applications.size
+                Log.d(TAG, "Calculated job stats: ${jobs.size} total, ${_activeJobs.value} active")
+
+                // Launch concurrent tasks to count applications for each job
+                coroutineScope {
+                    val applicationCountDeferreds = jobs.map { job ->
+                        async {
+                            try {
+                                val appResult = applicationRepository.getApplicationsForJob(job.id).first()
+                                if (appResult.isSuccess) {
+                                    appResult.getOrNull()?.size ?: 0
+                                } else {
+                                    0
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error counting applications for job ${job.id}: ${e.message}")
+                                0
                             }
                         }
-                } catch (e: Exception) {
-                    println("Exception while counting applications for job ${job.id}: ${e.message}")
+                    }
+
+                    // Wait for all application count tasks to complete
+                    val applicationCounts = applicationCountDeferreds.awaitAll()
+
+                    // Sum up all application counts
+                    val totalApps = applicationCounts.sum()
+                    _totalApplications.value = totalApps
+
+                    Log.d(TAG, "Calculated total of $totalApps applications across ${jobs.size} jobs")
                 }
             }
-            _totalApplications.value = totalApplications
-
-            println("Stats calculation complete: Total Jobs=${_totalJobs.value}, Active Jobs=${_activeJobs.value}, Total Applications=${_totalApplications.value}")
         } catch (e: Exception) {
-            println("Error in calculateStatsFromJobs: ${e.message}")
-            e.printStackTrace()
+            Log.e(TAG, "Error calculating job stats: ${e.message}", e)
         }
     }
 
@@ -468,7 +503,17 @@ class EmployerDashboardViewModel @Inject constructor(
     fun refreshDashboard() {
         viewModelScope.launch {
             _isLoading.value = true
-            loadEmployerProfile()
+            // Reset data to ensure fresh load
+            _dashboardData.value = null
+            _recentActivities.value = emptyList()
+            _recentJobs.value = emptyList()
+            _locationStats.value = emptyList()
+            _categoryStats.value = emptyList()
+            _totalJobs.value = 0
+            _activeJobs.value = 0
+            _totalApplications.value = 0
+
+            // Reload all data
             loadDashboardData()
         }
     }
