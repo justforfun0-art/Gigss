@@ -35,7 +35,7 @@ fun JobDetailsScreen(
     val isLoading by jobViewModel.isLoading.collectAsState()
     val hasApplied by jobViewModel.hasApplied.collectAsState()
     val employerProfile by jobViewModel.employerProfile.collectAsState()
-    val applicationStatus by jobViewModel.applicationStatus.collectAsState()
+    val applicationStatus by jobViewModel.applicationUIState.collectAsState()
 
     // State to show error message
     var showErrorDialog by remember { mutableStateOf(false) }
@@ -51,11 +51,11 @@ fun JobDetailsScreen(
     // Observe application status changes
     LaunchedEffect(applicationStatus) {
         when (applicationStatus) {
-            is JobViewModel.ApplicationStatus.ERROR -> {
-                errorMessage = (applicationStatus as JobViewModel.ApplicationStatus.ERROR).message
+            is JobViewModel.ApplicationUIState.ERROR -> {
+                errorMessage = (applicationStatus as JobViewModel.ApplicationUIState.ERROR).message
                 showErrorDialog = true
             }
-            is JobViewModel.ApplicationStatus.SUCCESS -> {
+            is JobViewModel.ApplicationUIState.SUCCESS -> {
                 // Success was handled by setting hasApplied = true
             }
             else -> {}
@@ -329,7 +329,7 @@ fun JobDetailsScreen(
                                 jobViewModel.applyForJob(jobId)
                                 // onApply called only when the application succeeds
                                 // we'll use the applicationStatus for that
-                                if (applicationStatus is JobViewModel.ApplicationStatus.SUCCESS) {
+                                if (applicationStatus is JobViewModel.ApplicationUIState.SUCCESS) {
                                     onApply()
                                 }
                             }

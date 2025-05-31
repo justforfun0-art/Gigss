@@ -59,6 +59,7 @@ import com.example.gigs.ui.screens.dashboard.EmployeeDashboardScreen
 import com.example.gigs.ui.screens.jobs.JobHistoryScreen
 import com.example.gigs.ui.screens.notifications.NotificationsScreen
 import androidx.navigation.navArgument
+import com.example.gigs.data.repository.JobRepository
 import com.example.gigs.ui.screens.jobs.AllApplicationsScreen
 import com.example.gigs.ui.screens.jobs.EmployerJobDetailsScreen
 import com.example.gigs.ui.screens.jobs.JobApplicationDetailsScreen
@@ -66,6 +67,7 @@ import com.example.gigs.ui.screens.jobs.JobApplicationsScreen
 import com.example.gigs.ui.screens.jobs.JobHistoryScreen
 import com.example.gigs.ui.screens.profile.ApplicantProfileScreen
 import com.example.gigs.ui.screens.profile.EditEmployerProfileScreen
+import com.example.gigs.viewmodel.JobViewModel
 
 // Add applications view screen route
 object ApplicationsView : Screen("applications_view")
@@ -328,8 +330,12 @@ fun AppNavHost(
 
         // Main app screens
         composable(Screen.EmployeeHome.route) {
+            // Get the JobRepository instance
+            val jobRepository: JobRepository = hiltViewModel<JobViewModel>().jobRepository
+
             EmployeeHomeScreen(
                 authViewModel = authViewModel,
+                jobRepository = jobRepository, // Add this
                 onSignOut = {
                     navController.navigate(Screen.Welcome.route) {
                         popUpTo(0) { inclusive = true }
@@ -349,6 +355,9 @@ fun AppNavHost(
                 },
                 onNavigateToJobHistory = {
                     navController.navigate(Screen.JobHistory.route)
+                },
+                onNavigateToJobDetails = { jobId ->  // Add this
+                    navController.navigate(Screen.JobDetails.createRoute(jobId))
                 }
             )
         }

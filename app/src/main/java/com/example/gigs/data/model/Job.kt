@@ -32,7 +32,7 @@ enum class ApplicationStatus {
     REJECTED,
     ACCEPTED,
     HIRED, // Add this if needed
-    COMPLETED, // Add this if needed
+     // Add this if needed
     WITHDRAWN
 }
 
@@ -148,7 +148,7 @@ data class ApplicationWithJob(
     val employerId: String = job.employerId,
 
     @Transient
-val employerName: String? = null
+    val employerName: String? = null
 )
 
 /**

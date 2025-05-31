@@ -1,3 +1,4 @@
+import Build_gradle.Versions.compose_version
 import org.jetbrains.kotlin.commonizer.OptimisticNumberCommonizationEnabledKey.alias
 import java.util.Properties
 import java.io.FileInputStream
@@ -160,6 +161,8 @@ object Versions {
     const val composeBom = "2024.02.00"
     const val nav = "2.8.0"
     const val accompanist = "0.34.0" // New version constant
+   const val compose_version = "1.5.0" // or whatever version you're using
+
 
 }
 
@@ -225,6 +228,9 @@ dependencies {
     implementation("androidx.compose.animation:animation")
     implementation("androidx.activity:activity-compose:1.8.2")
     implementation("androidx.compose.runtime:runtime")
+
+    implementation("androidx.compose.material:material:$compose_version")
+
 
     // Networking
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
