@@ -481,7 +481,6 @@ private fun AppliedIndicator() {
         )
     }
 }
-
 // Stable data class to prevent recompositions
 private data class JobItemData(
     val id: String,

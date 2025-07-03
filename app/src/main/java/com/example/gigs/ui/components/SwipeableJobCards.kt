@@ -102,6 +102,7 @@ import kotlin.math.roundToInt
 import com.example.gigs.data.util.ComposeOptimizationUtils
 import com.example.gigs.data.util.PerformanceUtils
 import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
@@ -123,9 +124,8 @@ enum class SwipeDirection {
  * - Improved card centering and layout
  * - Enhanced performance and error handling
  * - Better visual styling and UX
+ * - 🚀 NEW: Integrated reconsideration system
  */
-// 🚀 FIXED SwipeableJobCards - handleJobAction method corrected
-
 @Composable
 fun SwipeableJobCards(
     jobs: List<Job>,
@@ -134,6 +134,7 @@ fun SwipeableJobCards(
     onJobRejected: (Job) -> Unit,
     onJobDetails: (String) -> Unit,
     modifier: Modifier = Modifier,
+    isSwipeEnabled: Boolean = true,  // ADD THIS PARAMETER
     jobViewModel: JobViewModel = hiltViewModel(),
     processedJobsViewModel: ProcessedJobsViewModel = hiltViewModel(),
     jobHistoryViewModel: JobHistoryViewModel? = hiltViewModel(),
@@ -154,14 +155,18 @@ fun SwipeableJobCards(
     val isShowingRejectedJobs by processedJobsViewModel.isShowingRejectedJobs.collectAsState()
     val featuredJobs by jobViewModel.featuredJobs.collectAsState()
 
-    // 🚀 OPTIMIZED: Derive UI state efficiently
-    val uiState by remember(sessionProcessedJobIds, processedJobIds, isShowingRejectedJobs, featuredJobs) {
+    // 🚀 NEW: Add reconsideration state tracking
+    val reconsideredJobIds by processedJobsViewModel.reconsideredJobIds.collectAsState()
+
+    // 🚀 OPTIMIZED: Derive UI state efficiently with reconsideration data
+    val uiState by remember(sessionProcessedJobIds, processedJobIds, isShowingRejectedJobs, featuredJobs, reconsideredJobIds) {
         derivedStateOf {
             SwipeableJobsUiState(
                 sessionProcessedJobIds = sessionProcessedJobIds,
                 processedJobIds = processedJobIds,
                 isShowingRejectedJobs = isShowingRejectedJobs,
-                featuredJobs = featuredJobs
+                featuredJobs = featuredJobs,
+                reconsideredJobIds = reconsideredJobIds // 🚀 NEW: Include reconsideration state
             )
         }
     }
@@ -176,28 +181,65 @@ fun SwipeableJobCards(
         )
     }
 
-    // 🚀 CRITICAL FIX: Track processing jobs to prevent duplicates
+    // 🚀 CRITICAL FIX: Better processing jobs management with automatic cleanup
     val processingJobs = remember { mutableSetOf<String>() }
 
-    // 🚀 ENHANCED: Longer throttle interval for better deduplication
-    val throttledAction = ComposeOptimizationUtils.rememberThrottledAction(1000L)
+    // 🚀 CRITICAL FIX: Track processed jobs in current session to prevent reappearing
+    val sessionProcessedJobs = remember { mutableSetOf<String>() }
 
-    // 🚀 OPTIMIZED: Efficient job filtering with stable references
-    val displayJobs by remember(stableJobs, uiState.sessionProcessedJobIds) {
+    // 🚀 ENHANCED: Shorter throttle interval for more responsive UI
+    val throttledAction = ComposeOptimizationUtils.rememberThrottledAction(500L)
+
+    // 🚀 ENHANCED: Filtering logic with reconsideration system integration
+    val displayJobs by remember(stableJobs, uiState, sessionProcessedJobs.size, reconsideredJobIds.size) {
         derivedStateOf {
-            PerformanceUtils.PerformanceMetrics.measureOperation("filter_jobs_v2", "ui") {
+            PerformanceUtils.PerformanceMetrics.measureOperation("filter_jobs_v4", "ui") {
                 if (stableJobs.isEmpty()) return@measureOperation emptyList<Job>()
 
-                val filtered = stableJobs
-                    .asSequence()
-                    .filter { job -> !uiState.sessionProcessedJobIds.contains(job.id) }
-                    .distinctBy { it.id }
-                    .take(15) // Further limit for performance
-                    .toList()
+                val filtered = if (uiState.isShowingRejectedJobs) {
+                    // 🚀 ENHANCED: For rejected jobs mode, filter by session processed jobs AND reconsidered jobs
+                    stableJobs
+                        .asSequence()
+                        .filter { job ->
+                            !sessionProcessedJobs.contains(job.id) &&
+                                    !reconsideredJobIds.contains(job.id) // 🚀 KEY ADDITION: Exclude reconsidered jobs
+                        }
+                        .distinctBy { it.id }
+                        .take(20)
+                        .toList()
+                } else {
+                    // 🚀 REGULAR: For regular mode, filter by session processed jobs only
+                    stableJobs
+                        .asSequence()
+                        .filter { job -> !uiState.sessionProcessedJobIds.contains(job.id) }
+                        .distinctBy { it.id }
+                        .take(15)
+                        .toList()
+                }
 
-                Log.d("SwipeableJobCards", "Filtered ${stableJobs.size} jobs to ${filtered.size} displayable jobs")
+                // 🚀 ENHANCED LOGGING: Include reconsideration stats
+                Log.d("SwipeableJobCards", "🚀 FILTER: Mode=${if (uiState.isShowingRejectedJobs) "REJECTED" else "REGULAR"}, Input=${stableJobs.size}, Output=${filtered.size}, SessionProcessed=${sessionProcessedJobs.size}, Reconsidered=${reconsideredJobIds.size}")
                 filtered
             }
+        }
+    }
+
+    // 🚀 NEW: Helper function for getting eligible reconsideration count
+    fun getEligibleReconsiderationCount(): Int {
+        return jobViewModel.getEligibleReconsiderationCount()
+    }
+
+    // 🚀 OPTIONAL: Additional helper function for debugging reconsideration state
+    fun logReconsiderationState() {
+        if (BuildConfig.DEBUG) {
+            Log.d("SwipeableJobCards", """
+                🔍 RECONSIDERATION STATE:
+                • Total Reconsidered Jobs: ${reconsideredJobIds.size}
+                • Reconsidered IDs: ${reconsideredJobIds.take(5)}${if (reconsideredJobIds.size > 5) "..." else ""}
+                • Session Processed: ${sessionProcessedJobs.size}
+                • Available Jobs in Rejected Mode: ${if (uiState.isShowingRejectedJobs) displayJobs.size else "N/A"}
+                • Eligible for Reconsideration: ${getEligibleReconsiderationCount()}
+            """.trimIndent())
         }
     }
 
@@ -226,7 +268,7 @@ fun SwipeableJobCards(
         }
     }
 
-    // 🚀 COMPLETELY FIXED: Simplified job action handler
+    // 🚀 COMPLETELY FIXED: Simplified job action handler with proper index management
     val handleJobAction = remember(jobViewModel, processedJobsViewModel, coroutineScope) {
         { job: Job, isAccept: Boolean ->
             // 🚀 CRITICAL: Immediate duplicate check
@@ -244,22 +286,23 @@ fun SwipeableJobCards(
             // Mark as processing immediately
             processingJobs.add(job.id)
 
+            // 🚀 CRITICAL FIX: Add to session processed immediately to prevent job reappearing
+            sessionProcessedJobs.add(job.id)
+
             throttledAction {
                 // 🚀 CRITICAL: Use coroutine scope for suspend functions
                 coroutineScope.launch {
                     try {
                         Log.d("SwipeableJobCards", "⚡ Processing ${if (isAccept) "ACCEPT" else "REJECT"} for job ${job.id}")
 
-                        // 🚀 STEP 1: Immediate index management
+                        // 🚀 CRITICAL FIX: Always advance index in both modes
                         val isLastJob = currentIndex == displayJobs.size - 1
-                        val isRejectedJobsMode = uiState.isShowingRejectedJobs
 
-                        // Index management
-                        if (isRejectedJobsMode) {
-                            Log.d("SwipeableJobCards", "Rejected jobs mode: keeping currentIndex at $currentIndex")
+                        if (!isLastJob) {
+                            currentIndex = currentIndex + 1
+                            Log.d("SwipeableJobCards", "Advanced currentIndex to $currentIndex")
                         } else {
-                            currentIndex = (currentIndex + 1).coerceAtMost(displayJobs.size - 1)
-                            Log.d("SwipeableJobCards", "Regular mode: incremented currentIndex to $currentIndex")
+                            Log.d("SwipeableJobCards", "Reached last job, currentIndex remains at $currentIndex")
                         }
 
                         // 🚀 STEP 2: Process job action through ViewModel
@@ -279,12 +322,7 @@ fun SwipeableJobCards(
                             jobViewModel.markJobAsNotInterested(job.id)
                         }
 
-                        // 🚀 STEP 3: Handle end of session
-                        if (isLastJob && isRejectedJobsMode && !isAccept) {
-                            Log.d("SwipeableJobCards", "Last rejected job processed - completing session for job ${job.id}")
-                        }
-
-                        // 🚀 STEP 4: Background operations (non-blocking)
+                        // 🚀 STEP 3: Background operations (non-blocking)
                         launch(Dispatchers.Default) {
                             try {
                                 // Vibration
@@ -316,11 +354,10 @@ fun SwipeableJobCards(
                         Log.e("SwipeableJobCards", "❌ Job action failed: ${e.message}")
                         stableCallbacks.onError(e.message ?: "Unknown error")
 
-                        // Revert index on critical error
-                        if (!uiState.isShowingRejectedJobs && !isAccept) {
-                            currentIndex = maxOf(0, currentIndex - 1)
-                            Log.d("SwipeableJobCards", "Reverted currentIndex due to critical error")
-                        }
+                        // 🚀 FIX: Revert index and session processing on error
+                        currentIndex = maxOf(0, currentIndex - 1)
+                        sessionProcessedJobs.remove(job.id)
+                        Log.d("SwipeableJobCards", "Reverted changes due to error")
                     } finally {
                         // 🚀 CRITICAL: Always remove from processing set
                         processingJobs.remove(job.id)
@@ -330,17 +367,38 @@ fun SwipeableJobCards(
         }
     }
 
+    // 🚀 FIX: Reset index when switching modes or when jobs change significantly
+    LaunchedEffect(uiState.isShowingRejectedJobs, displayJobs.size) {
+        // Only reset if we're out of bounds or switching modes
+        if (currentIndex >= displayJobs.size && displayJobs.isNotEmpty()) {
+            currentIndex = 0
+            Log.d("SwipeableJobCards", "Reset index due to bounds check: displayJobs=${displayJobs.size}")
+        }
+    }
+
+    // 🚀 FIX: Clear session processed jobs when entering rejected jobs mode
+    LaunchedEffect(uiState.isShowingRejectedJobs) {
+        if (uiState.isShowingRejectedJobs) {
+            sessionProcessedJobs.clear()
+            Log.d("SwipeableJobCards", "Cleared session processed jobs for rejected jobs mode")
+        } else {
+            sessionProcessedJobs.clear()
+            Log.d("SwipeableJobCards", "Cleared session processed jobs for regular mode")
+        }
+    }
+
     // 🚀 NEW: Clear processing jobs when component is disposed
     DisposableEffect(Unit) {
         onDispose {
             processingJobs.clear()
+            sessionProcessedJobs.clear()
         }
     }
 
-    // 🚀 NEW: Clear stale processing jobs periodically
+    // 🚀 ENHANCED: Clear stale processing jobs periodically
     LaunchedEffect(Unit) {
         while (true) {
-            delay(10000) // Every 10 seconds
+            delay(5000) // Every 5 seconds
             if (processingJobs.isNotEmpty()) {
                 Log.d("SwipeableJobCards", "Clearing ${processingJobs.size} potentially stale processing jobs")
                 processingJobs.clear()
@@ -348,39 +406,16 @@ fun SwipeableJobCards(
         }
     }
 
-    // 🚀 ENHANCED: Better logging and state monitoring
-    LaunchedEffect(isShowingRejectedJobs, featuredJobs.size) {
-        Log.d("SwipeableJobCards", "UI State - ShowingRejected: $isShowingRejectedJobs, Jobs: ${featuredJobs.size}")
+    // 🚀 ENHANCED: Better logging and state monitoring with reconsideration info
+    LaunchedEffect(isShowingRejectedJobs, featuredJobs.size, currentIndex, reconsideredJobIds.size) {
+        Log.d("SwipeableJobCards", "🚀 UI State - Mode: ${if (isShowingRejectedJobs) "REJECTED" else "REGULAR"}, Jobs: ${featuredJobs.size}, Display: ${displayJobs.size}, Index: $currentIndex, Reconsidered: ${reconsideredJobIds.size}")
         if (isShowingRejectedJobs) {
-            Log.d("SwipeableJobCards", "Rejected jobs mode - Job IDs: ${featuredJobs.map { it.id }}")
+            Log.d("SwipeableJobCards", "Rejected jobs mode - Job IDs: ${featuredJobs.map { it.id.take(8) + "..." }}")
         }
-    }
 
-    // 🚀 ENHANCED: Monitor for rejected jobs session completion
-    LaunchedEffect(uiState.isShowingRejectedJobs, displayJobs.size, currentIndex) {
-        if (uiState.isShowingRejectedJobs) {
-            Log.d("SwipeableJobCards", "Rejected jobs session state - displayJobs: ${displayJobs.size}, currentIndex: $currentIndex")
-            if (displayJobs.isEmpty()) {
-                Log.d("SwipeableJobCards", "Rejected jobs session completed - no more jobs to display")
-            } else if (currentIndex >= displayJobs.size - 1) {
-                Log.d("SwipeableJobCards", "Approaching end of rejected jobs session")
-            }
-        }
-    }
-
-    // 🚀 REDUCED: Minimal LaunchedEffects for essential updates only
-    LaunchedEffect(uiState.featuredJobs.size) {
-        if (uiState.featuredJobs.isNotEmpty() && displayJobs.isEmpty()) {
-            Log.d("SwipeableJobCards", "Refreshing jobs from ViewModel: ${uiState.featuredJobs.size}")
-            currentIndex = 0
-        }
-    }
-
-    // 🚀 OPTIMIZED: Memory monitoring with circuit breaker
-    LaunchedEffect(displayJobs.size) {
-        if (displayJobs.size > 50 && PerformanceUtils.MemoryMonitor.isMemoryLow()) {
-            Log.w("SwipeableJobCards", "Memory pressure detected, clearing excess jobs")
-            // Let GC handle cleanup, don't manually manipulate lists
+        // 🚀 NEW: Log reconsideration state in debug builds
+        if (BuildConfig.DEBUG) {
+            logReconsiderationState()
         }
     }
 
@@ -405,7 +440,10 @@ fun SwipeableJobCards(
                 if (uiState.isShowingRejectedJobs && uiState.processedJobIds.isNotEmpty()) {
                     // User has finished reviewing rejected jobs
                     NoMoreJobsCard(
-                        onResetClick = { currentIndex = 0 },
+                        onResetClick = {
+                            currentIndex = 0
+                            sessionProcessedJobs.clear()
+                        },
                         jobViewModel = jobViewModel,
                         processedJobsViewModel = processedJobsViewModel,
                         jobHistoryViewModel = jobHistoryViewModel,
@@ -416,7 +454,10 @@ fun SwipeableJobCards(
                 } else if (uiState.processedJobIds.isNotEmpty()) {
                     // User has processed jobs but none are available to display
                     NoMoreJobsCard(
-                        onResetClick = { currentIndex = 0 },
+                        onResetClick = {
+                            currentIndex = 0
+                            sessionProcessedJobs.clear()
+                        },
                         jobViewModel = jobViewModel,
                         processedJobsViewModel = processedJobsViewModel,
                         jobHistoryViewModel = jobHistoryViewModel,
@@ -436,7 +477,10 @@ fun SwipeableJobCards(
             currentIndex >= displayJobs.size -> {
                 // User has swiped through all available jobs
                 NoMoreJobsCard(
-                    onResetClick = { currentIndex = 0 },
+                    onResetClick = {
+                        currentIndex = 0
+                        sessionProcessedJobs.clear()
+                    },
                     jobViewModel = jobViewModel,
                     processedJobsViewModel = processedJobsViewModel,
                     jobHistoryViewModel = jobHistoryViewModel,
@@ -455,7 +499,8 @@ fun SwipeableJobCards(
                     onSwipeRight = { job -> handleJobAction(job, true) },
                     onCardClick = { job -> selectedJob = job },
                     showConfetti = showConfetti,
-                    isShowingRejectedJobs = uiState.isShowingRejectedJobs
+                    isShowingRejectedJobs = uiState.isShowingRejectedJobs,
+                    isSwipeEnabled = isSwipeEnabled  // ADD THIS LINE
                 )
             }
         }
@@ -479,13 +524,14 @@ fun SwipeableJobCards(
     }
 }
 
-// 🚀 PERFORMANCE: Separate data class for UI state
+// 🚀 ENHANCED: Stable data class for UI state with reconsideration support
 @Stable
 data class SwipeableJobsUiState(
     val sessionProcessedJobIds: Set<String> = emptySet(),
     val processedJobIds: Set<String> = emptySet(),
     val isShowingRejectedJobs: Boolean = false,
-    val featuredJobs: List<Job> = emptyList()
+    val featuredJobs: List<Job> = emptyList(),
+    val reconsideredJobIds: Set<String> = emptySet() // 🚀 NEW: Reconsideration state
 )
 
 // 🚀 PERFORMANCE: Stable callback container
@@ -507,23 +553,42 @@ private fun JobCardsDisplay(
     onSwipeRight: (Job) -> Unit,
     onCardClick: (Job) -> Unit,
     showConfetti: Boolean,
-    isShowingRejectedJobs: Boolean
+    isShowingRejectedJobs: Boolean,
+    isSwipeEnabled: Boolean = true  // ADD THIS PARAMETER
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center // 🚀 FIX: Ensure main container centers content
     ) {
-        // 🚀 PERFORMANCE: Banner only when needed
-        if (isShowingRejectedJobs) {
-           /* RejectedJobsBanner(
+        if (!isSwipeEnabled && displayJobs.isNotEmpty()) {
+            Card(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .zIndex(20f)
-            )
-
-            */
+                    .padding(16.dp)
+                    .zIndex(25f),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Complete active job to apply for new jobs",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
         }
-
         // 🚀 OPTIMIZED: Confetti overlay
         if (showConfetti) {
             ConfettiAnimation(
@@ -568,6 +633,7 @@ private fun JobCardsDisplay(
                         onSwipeLeft = { onSwipeLeft(job) },
                         onSwipeRight = { onSwipeRight(job) },
                         onCardClick = { onCardClick(job) },
+                        isSwipeEnabled = isSwipeEnabled,  // ADD THIS LINE
                         modifier = Modifier
                             .fillMaxWidth(0.85f)
                             .zIndex(10f)
@@ -577,7 +643,7 @@ private fun JobCardsDisplay(
         }
 
         // 🚀 OPTIMIZED: Action buttons with proper positioning
-        if (topJob != null) {
+        if (topJob != null && isSwipeEnabled) {
             ActionButtons(
                 onReject = { onSwipeLeft(topJob) },
                 onAccept = { onSwipeRight(topJob) },
@@ -589,47 +655,6 @@ private fun JobCardsDisplay(
         }
     }
 }
-/*
-
-// 🚀 OPTIMIZED: Banner component with better styling
-@Composable
-private fun RejectedJobsBanner(modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier
-            .fillMaxWidth(),
-        color = Color(0xFFFFA000),
-        shadowElevation = 2.dp // 🚀 FIX: Add subtle shadow
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp, horizontal = 16.dp), // 🚀 FIX: Better padding
-            contentAlignment = Alignment.Center
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-              /*  Text(
-                    text = "Reconsidering previously rejected jobs",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-
-               */
-            }
-        }
-    }
-}
-*/
 
 // 🚀 OPTIMIZED: Confetti animation
 @Composable
@@ -722,13 +747,13 @@ private fun EmptyRejectedJobsCard(modifier: Modifier = Modifier) {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                "No rejected jobs to reconsider",
+                "No jobs to reconsider",
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                "You haven't rejected any jobs yet",
+                "You haven't marked any jobs as not interested yet",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center
             )
@@ -744,6 +769,7 @@ fun SwipeableJobCardsWithMonitoring(
     onJobRejected: (Job) -> Unit,
     onJobDetails: (String) -> Unit,
     modifier: Modifier = Modifier,
+    isSwipeEnabled: Boolean = true,  // ADD THIS PARAMETER
     jobViewModel: JobViewModel = hiltViewModel(),
     processedJobsViewModel: ProcessedJobsViewModel = hiltViewModel(),
     jobHistoryViewModel: JobHistoryViewModel? = hiltViewModel(),
@@ -758,6 +784,7 @@ fun SwipeableJobCardsWithMonitoring(
         onJobRejected = onJobRejected,
         onJobDetails = onJobDetails,
         modifier = modifier,
+        isSwipeEnabled = isSwipeEnabled,  // ADD THIS LINE
         jobViewModel = jobViewModel,
         processedJobsViewModel = processedJobsViewModel,
         jobHistoryViewModel = jobHistoryViewModel
@@ -782,6 +809,7 @@ fun RefreshableSwipeableJobCards(
     onNavigateToLocationSearch: () -> Unit = {},
     onShowJobAlertDialog: () -> Unit = {},
     modifier: Modifier = Modifier,
+    isSwipeEnabled: Boolean = true,  // ADD THIS PARAMETER
     jobViewModel: JobViewModel = hiltViewModel(),
     processedJobsViewModel: ProcessedJobsViewModel = hiltViewModel(),
     jobHistoryViewModel: JobHistoryViewModel = hiltViewModel(),
@@ -841,7 +869,8 @@ fun RefreshableSwipeableJobCards(
                 onJobAccepted = onJobAccepted,
                 onJobRejected = onJobRejected,
                 onJobDetails = onJobDetails,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                isSwipeEnabled = isSwipeEnabled  // ADD THIS LINE
             )
 
             // Quick action buttons overlay (top right)
@@ -949,7 +978,7 @@ private fun EmptyJobsState(
 
         Text(
             text = if (isShowingRejectedJobs) {
-                "You've reviewed all your previously rejected jobs"
+                "You've reviewed all jobs you previously marked as not interested"
             } else {
                 "Pull down to refresh or check back later"
             },
@@ -996,14 +1025,14 @@ fun NoMoreJobsCard(
         modifier = modifier
             .fillMaxWidth()
             .padding(16.dp)
-            .heightIn(min = 220.dp), // Added minimum height for bigger card
+            .heightIn(min = 220.dp),
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(24.dp), // Increased from 16.dp to 24.dp for more spacious feel
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 🚀 ENHANCED: Different icons and messages based on mode
@@ -1014,7 +1043,7 @@ fun NoMoreJobsCard(
                     Icons.Default.Refresh
                 },
                 contentDescription = null,
-                modifier = Modifier.size(56.dp), // Increased from 48.dp to 56.dp
+                modifier = Modifier.size(56.dp),
                 tint = if (isShowingRejectedJobs) {
                     Color.Green
                 } else {
@@ -1022,11 +1051,11 @@ fun NoMoreJobsCard(
                 }
             )
 
-            Spacer(modifier = Modifier.height(20.dp)) // Increased from 16.dp
+            Spacer(modifier = Modifier.height(20.dp))
 
             Text(
                 text = if (isShowingRejectedJobs)
-                    "✅ All rejected jobs reviewed!"
+                    "✅ All not interested jobs reviewed!"
                 else
                     "You've seen all available jobs",
                 style = MaterialTheme.typography.titleMedium,
@@ -1034,31 +1063,29 @@ fun NoMoreJobsCard(
                 fontWeight = FontWeight.Bold
             )
 
-            Spacer(modifier = Modifier.height(12.dp)) // Increased from 8.dp
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
                 text = if (isShowingRejectedJobs)
-                    "You've finished reconsidering all your previously rejected jobs"
+                    "You've finished reconsidering all jobs you previously marked as not interested"
                 else
                     "Check back later for new job opportunities",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(24.dp)) // Increased from 16.dp
+            Spacer(modifier = Modifier.height(24.dp))
 
             if (isShowingRejectedJobs) {
                 // 🚀 ENHANCED: Return to regular job search with session cleanup
                 Button(
                     onClick = {
-                        Log.d("NoMoreJobsCard", "Returning to regular job search after rejected jobs review")
+                        Log.d("NoMoreJobsCard", "Returning to regular job search after reviewing not interested jobs")
 
                         coroutineScope.launch {
                             try {
-                                // 🚀 CRITICAL: End the rejected jobs session properly
+                                // End the rejected jobs session properly
                                 jobViewModel.endRejectedJobsSession()
-
-                                // Set the showing rejected jobs flag to false
                                 processedJobsViewModel.setShowingRejectedJobs(false)
 
                                 // Get fresh jobs for regular browsing
@@ -1069,10 +1096,7 @@ fun NoMoreJobsCard(
                                     jobViewModel.getFeaturedJobs(10)
                                 }
 
-                                // Reset the card display
                                 onResetClick()
-
-                                // Refresh job history to reflect any changes
                                 jobHistoryViewModel?.refreshApplicationHistory()
 
                                 Log.d("NoMoreJobsCard", "Successfully returned to regular job search")
@@ -1095,34 +1119,29 @@ fun NoMoreJobsCard(
                     Text("Back to Job Search")
                 }
             } else {
-                // 🚀 ENHANCED: Show rejected jobs option with better messaging
-                val rejectedCount = processedJobsViewModel.rejectedJobIds.collectAsState().value.size
+                // 🚀 ENHANCED: Show not interested jobs option with better messaging
+                val notInterestedCount = processedJobsViewModel.rejectedJobIds.collectAsState().value.size
 
                 Button(
                     onClick = {
-                        Log.d("NoMoreJobsCard", "Starting rejected jobs review session")
+                        Log.d("NoMoreJobsCard", "Starting not interested jobs review session")
 
                         coroutineScope.launch {
                             try {
-                                // 🚀 CRITICAL: Start rejected jobs session properly
+                                // Start rejected jobs session properly
                                 jobViewModel.startRejectedJobsSession()
-
-                                // Set the showing rejected jobs flag to true
                                 processedJobsViewModel.setShowingRejectedJobs(true)
 
-                                // Get rejected jobs
+                                // Get not interested jobs
                                 val district = jobViewModel.employeeProfile.value?.district ?: ""
                                 jobViewModel.getOnlyRejectedJobs(district)
 
-                                // Reset the card display
                                 onResetClick()
-
-                                // Refresh job history
                                 jobHistoryViewModel?.refreshApplicationHistory()
 
-                                Log.d("NoMoreJobsCard", "Successfully started rejected jobs session")
+                                Log.d("NoMoreJobsCard", "Successfully started not interested jobs session")
                             } catch (e: Exception) {
-                                Log.e("NoMoreJobsCard", "Error starting rejected jobs session: ${e.message}")
+                                Log.e("NoMoreJobsCard", "Error starting not interested jobs session: ${e.message}")
                             }
                         }
                     },
@@ -1130,7 +1149,7 @@ fun NoMoreJobsCard(
                         containerColor = MaterialTheme.colorScheme.secondary
                     ),
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = rejectedCount > 0
+                    enabled = notInterestedCount > 0
                 ) {
                     Icon(
                         Icons.Default.Refresh,
@@ -1139,10 +1158,10 @@ fun NoMoreJobsCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        if (rejectedCount > 0) {
-                            "Reconsider $rejectedCount Rejected Jobs"
+                        if (notInterestedCount > 0) {
+                            "Reconsider $notInterestedCount Not Interested Jobs"
                         } else {
-                            "No Rejected Jobs to Reconsider"
+                            "No Jobs to Reconsider"
                         }
                     )
                 }
@@ -1452,6 +1471,8 @@ fun FullScreenJobDetailsDialog(
     }
 }
 
+// 🚀 CRITICAL FIXES for SwipeableJobCard - Navigation and Processing Issues
+
 @OptIn(ExperimentalWearMaterialApi::class)
 @Composable
 fun SwipeableJobCard(
@@ -1460,7 +1481,8 @@ fun SwipeableJobCard(
     onSwipeLeft: () -> Unit,
     onSwipeRight: () -> Unit,
     onCardClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isSwipeEnabled: Boolean = true  // ADD THIS PARAMETER
 ) {
     // Create anchors for left, center, and right positions
     val screenWidth = with(LocalDensity.current) {
@@ -1478,36 +1500,60 @@ fun SwipeableJobCard(
     )
 
     // Calculate rotation based on offset
-    val rotation = (swipeableState.offset.value / screenWidth) * 15f
-
+    val rotation = if (isSwipeEnabled) {
+        (swipeableState.offset.value / screenWidth) * 15f
+    } else {
+        0f
+    }
     // Determine when to show swipe overlays
     val showLeftSwipeOverlay = swipeableState.offset.value < -screenWidth * 0.05f
     val showRightSwipeOverlay = swipeableState.offset.value > screenWidth * 0.05f
 
-    // Handle swipe completion
-    LaunchedEffect(swipeableState.currentValue) {
+    // 🚀 CRITICAL FIX: Better swipe completion handling with immediate reset
+    LaunchedEffect(swipeableState.currentValue,isSwipeEnabled) {
+        if (!isSwipeEnabled) return@LaunchedEffect  // Don't handle swipes if disabled
         when (swipeableState.currentValue) {
             SwipeDirection.LEFT -> {
                 Log.d("SwipeableJobCard", "LEFT swipe completed for job: ${job.id}")
+
+                // 🚀 FIX: Trigger action and immediately reset to prevent stuck state
                 onSwipeLeft()
-                // Reset to center to prevent double-triggers
-                swipeableState.snapTo(SwipeDirection.CENTER)
+
+                // 🚀 CRITICAL: Reset to center immediately to prevent multiple triggers
+                try {
+                    swipeableState.snapTo(SwipeDirection.CENTER)
+                    Log.d("SwipeableJobCard", "Reset position to CENTER for job: ${job.id}")
+                } catch (e: Exception) {
+                    Log.e("SwipeableJobCard", "Error resetting swipe state: ${e.message}")
+                }
             }
             SwipeDirection.RIGHT -> {
                 Log.d("SwipeableJobCard", "RIGHT swipe completed for job: ${job.id}")
+
+                // 🚀 FIX: Trigger action and immediately reset to prevent stuck state
                 onSwipeRight()
-                // Reset to center to prevent double-triggers
-                swipeableState.snapTo(SwipeDirection.CENTER)
+
+                // 🚀 CRITICAL: Reset to center immediately to prevent multiple triggers
+                try {
+                    swipeableState.snapTo(SwipeDirection.CENTER)
+                    Log.d("SwipeableJobCard", "Reset position to CENTER for job: ${job.id}")
+                } catch (e: Exception) {
+                    Log.e("SwipeableJobCard", "Error resetting swipe state: ${e.message}")
+                }
             }
             else -> { /* Do nothing if we're in the center */ }
         }
     }
 
-    // Reset card position when job changes
+    // 🚀 ENHANCED: Better job change handling with immediate state reset
     LaunchedEffect(job.id) {
         Log.d("SwipeableJobCard", "New job card: ${job.id}, resetting position")
-        if (swipeableState.currentValue != SwipeDirection.CENTER) {
+        try {
+            // 🚀 CRITICAL: Always reset to center when job changes
             swipeableState.snapTo(SwipeDirection.CENTER)
+            Log.d("SwipeableJobCard", "Successfully reset position for new job: ${job.id}")
+        } catch (e: Exception) {
+            Log.e("SwipeableJobCard", "Error resetting position for new job ${job.id}: ${e.message}")
         }
     }
 
@@ -1517,20 +1563,30 @@ fun SwipeableJobCard(
             .height(400.dp)
             .offset { IntOffset(swipeableState.offset.value.roundToInt(), 0) }
             .rotate(rotation)
-            .swipeable(
-                state = swipeableState,
-                anchors = anchors,
-                thresholds = { _, _ -> FractionalThreshold(0.3f) }, // Require 30% of the way to swap
-                orientation = Orientation.Horizontal,
-                resistance = null // No resistance for smooth swiping
+            .then(
+                if (isSwipeEnabled) {
+                    Modifier.swipeable(
+                        state = swipeableState,
+                        anchors = anchors,
+                        thresholds = { _, _ -> FractionalThreshold(0.3f) },
+                        orientation = Orientation.Horizontal,
+                        resistance = null
+                    )
+                } else {
+                    Modifier  // No swipeable behavior when disabled
+                }
             ),
         elevation = CardDefaults.cardElevation(8.dp),
         colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surface),
         onClick = {
-            // Only trigger click if we're close to center position
-            if (abs(swipeableState.offset.value) < screenWidth * 0.1f) {
+            // Only allow clicks when swipe is enabled AND card is centered
+            if (isSwipeEnabled && abs(swipeableState.offset.value) < screenWidth * 0.1f) {
                 Log.d("SwipeableJobCard", "Card clicked: ${job.id}")
                 onCardClick()
+            } else if (!isSwipeEnabled) {
+                // Show a message when clicking disabled card
+                Log.d("SwipeableJobCard", "Card click disabled due to active job")
+                // You could trigger a snackbar here if you pass the callback
             }
         }
     ) {
@@ -1539,7 +1595,7 @@ fun SwipeableJobCard(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp), // 🚀 FIX: Increased padding for better spacing
+                    .padding(20.dp),
                 verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.Start
             ) {
@@ -1549,7 +1605,7 @@ fun SwipeableJobCard(
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.fillMaxWidth() // 🚀 FIX: Ensure full width
+                    modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1563,7 +1619,7 @@ fun SwipeableJobCard(
                         imageVector = Icons.Default.Work,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                        modifier = Modifier.size(18.dp) // 🚀 FIX: Slightly larger icon
+                        modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -1587,7 +1643,7 @@ fun SwipeableJobCard(
                         style = MaterialTheme.typography.titleMedium,
                         color = PrimaryBlue,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(12.dp) // 🚀 FIX: Better padding
+                        modifier = Modifier.padding(12.dp)
                     )
                 }
 
@@ -1604,7 +1660,7 @@ fun SwipeableJobCard(
                             imageVector = Icons.Default.LocationOn,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            modifier = Modifier.size(18.dp) // 🚀 FIX: Consistent icon size
+                            modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -1638,7 +1694,7 @@ fun SwipeableJobCard(
                         maxLines = 4,
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        lineHeight = 20.sp // 🚀 FIX: Better line height for readability
+                        lineHeight = 20.sp
                     )
                 } else {
                     Text(
@@ -1665,8 +1721,54 @@ fun SwipeableJobCard(
                 }
             }
 
+
+            if (!isSwipeEnabled) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Color.Black.copy(alpha = 0.2f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                        ),
+                        elevation = CardDefaults.cardElevation(4.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Work,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Complete your active job first",
+                                style = MaterialTheme.typography.titleMedium,  // ← Larger text
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Tap to view details",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            }
+
             // Swipe action overlays with enhanced visibility and better positioning
-            if (showRightSwipeOverlay) {
+            if (showRightSwipeOverlay && isSwipeEnabled) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1675,10 +1777,10 @@ fun SwipeableJobCard(
                 ) {
                     Card(
                         modifier = Modifier
-                            .rotate(-20f) // 🚀 FIX: Reduced rotation for better visibility
+                            .rotate(-20f)
                             .scale(0.9f + (abs(swipeableState.offset.value) / screenWidth) * 0.2f),
                         colors = CardDefaults.cardColors(
-                            containerColor = Color(0xCC00AA00) // 🚀 FIX: Better opacity
+                            containerColor = Color(0xCC00AA00)
                         ),
                         elevation = CardDefaults.cardElevation(8.dp)
                     ) {
@@ -1704,7 +1806,7 @@ fun SwipeableJobCard(
                 }
             }
 
-            if (showLeftSwipeOverlay) {
+            if (showLeftSwipeOverlay && isSwipeEnabled) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1713,10 +1815,10 @@ fun SwipeableJobCard(
                 ) {
                     Card(
                         modifier = Modifier
-                            .rotate(20f) // 🚀 FIX: Reduced rotation for better visibility
+                            .rotate(20f)
                             .scale(0.9f + (abs(swipeableState.offset.value) / screenWidth) * 0.2f),
                         colors = CardDefaults.cardColors(
-                            containerColor = Color(0xCCFF4444) // 🚀 FIX: Better opacity
+                            containerColor = Color(0xCCFF4444)
                         ),
                         elevation = CardDefaults.cardElevation(8.dp)
                     ) {
@@ -1732,12 +1834,68 @@ fun SwipeableJobCard(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "REJECT",
+                                text = "NOT INTERESTED",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp
                             )
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DebugNavigationOverlay(
+    displayJobs: List<Job>,
+    currentIndex: Int,
+    isShowingRejectedJobs: Boolean,
+    sessionProcessedJobs: Set<String>
+) {
+    if (BuildConfig.DEBUG) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            contentAlignment = Alignment.TopStart
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.Black.copy(alpha = 0.7f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(8.dp)
+                ) {
+                    Text(
+                        text = "DEBUG MODE",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Mode: ${if (isShowingRejectedJobs) "REJECTED" else "REGULAR"}",
+                        color = Color.White,
+                        fontSize = 8.sp
+                    )
+                    Text(
+                        text = "Jobs: ${displayJobs.size}, Index: $currentIndex",
+                        color = Color.White,
+                        fontSize = 8.sp
+                    )
+                    Text(
+                        text = "Session Processed: ${sessionProcessedJobs.size}",
+                        color = Color.White,
+                        fontSize = 8.sp
+                    )
+                    if (displayJobs.isNotEmpty() && currentIndex < displayJobs.size) {
+                        Text(
+                            text = "Current: ${displayJobs[currentIndex].id.take(8)}...",
+                            color = Color.Yellow,
+                            fontSize = 8.sp
+                        )
                     }
                 }
             }

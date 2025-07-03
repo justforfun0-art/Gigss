@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.gigs.data.model.Gender
 import com.example.gigs.data.model.WorkPreference
+import com.example.gigs.utils.DateUtils
 import com.example.gigs.viewmodel.ApplicantProfileViewModel
 import java.time.LocalDate
 import java.time.Period
@@ -350,7 +351,7 @@ fun ApplicantProfileScreen(
                                 Spacer(modifier = Modifier.height(4.dp))
 
                                 Text(
-                                    text = "Profile created: ${formatDate(createdAt)}",
+                                    text = "Profile created: ${DateUtils.formatDate(createdAt)}",
                                     style = MaterialTheme.typography.bodySmall
                                 )
 
@@ -358,7 +359,7 @@ fun ApplicantProfileScreen(
                                     Spacer(modifier = Modifier.height(4.dp))
 
                                     Text(
-                                        text = "Last updated: ${formatDate(updatedAt)}",
+                                        text = "Last updated: ${DateUtils.formatDate(updatedAt)}",
                                         style = MaterialTheme.typography.bodySmall
                                     )
                                 }

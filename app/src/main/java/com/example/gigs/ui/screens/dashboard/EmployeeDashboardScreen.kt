@@ -27,6 +27,7 @@ import com.example.gigs.ui.components.DashboardCard
 import com.example.gigs.ui.components.DashboardEmptyStateMessage
 import com.example.gigs.ui.components.DashboardSectionHeader
 import com.example.gigs.ui.components.EmployeeProfileSection
+import com.example.gigs.utils.DateUtils
 import com.example.gigs.utils.DateUtils.formatDate
 import com.example.gigs.utils.DateUtils.formatTimeAgo
 import com.example.gigs.viewmodel.EmployeeDashboardViewModel
@@ -714,7 +715,9 @@ fun ApplicationItem(
 
             if (application.appliedAt != null) {
                 Text(
-                    text = "Applied on ${formatDate(application.appliedAt)}",
+                    text = application.appliedAt?.let {
+                        DateUtils.formatApplicationDate(it)
+                    } ?: "Applied recently",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

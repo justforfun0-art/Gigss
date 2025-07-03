@@ -1,5 +1,7 @@
 package com.example.gigs.data.model
 
+import kotlinx.serialization.Serializable
+
 data class EmployeeDashboardData(
     val userId: String,
     val totalApplications: Int = 0,
@@ -18,16 +20,20 @@ data class EmployerDashboardData(
     val reviewCount: Int = 0
 )
 
+@Serializable
 data class LocationStat(
     val location: String,
     val applicationCount: Int
 )
 
+@Serializable
 data class CategoryStat(
     val category: String,
     val applicationCount: Int
 )
 
+
+@Serializable
 data class Activity(
     val activityType: String,
     val activityId: String,

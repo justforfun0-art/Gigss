@@ -30,6 +30,7 @@ class ProcessedJobsViewModel @Inject constructor(
     val appliedJobIds = repository.appliedJobIds
     val rejectedJobIds = repository.rejectedJobIds
     val isShowingRejectedJobs = repository.isShowingRejectedJobs
+    val reconsideredJobIds = repository.reconsideredJobIds // 🚀 ADD THIS LINE
 
     // Additional state for UI
     private val _isLoading = MutableStateFlow(false)

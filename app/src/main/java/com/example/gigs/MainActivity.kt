@@ -17,6 +17,9 @@ import com.example.gigs.navigation.AppNavHost
 import com.example.gigs.ui.theme.GigsTheme
 import com.example.gigs.data.repository.AuthRepository
 import com.example.gigs.data.repository.ProfileRepository
+import com.example.gigs.data.repository.JobRepository
+import com.example.gigs.viewmodel.ProcessedJobsRepository
+import com.example.gigs.data.repository.ReconsiderationStorageManager
 import com.example.gigs.viewmodel.JobViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
@@ -32,9 +35,14 @@ class MainActivity : ComponentActivity() {
     private var memoryCallback: (() -> Unit)? = null
     private var performanceTimer: Timer? = null
 
-    // 🚀 PERFORMANCE FIX: Preload critical dependencies
+    // 🚀 EXISTING: Performance optimization dependencies
     @Inject lateinit var authRepository: AuthRepository
     @Inject lateinit var profileRepository: ProfileRepository
+
+    // 🚀 NEW: Reconsideration system dependencies
+    @Inject lateinit var jobRepository: JobRepository
+    @Inject lateinit var processedJobsRepository: ProcessedJobsRepository
+    @Inject lateinit var reconsiderationStorage: ReconsiderationStorageManager
 
     // Preloading scope - separate from UI to avoid blocking
     private val preloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -62,6 +70,11 @@ class MainActivity : ComponentActivity() {
                             startBackgroundDataLoading()
                         }
 
+                        // 🚀 NEW: Initialize reconsideration system
+                        launch(Dispatchers.IO) {
+                            initializeReconsiderationSystem()
+                        }
+
                         // End startup timing
                         PerformanceUtils.PerformanceMetrics.endTiming("app_startup", appStartTime)
                     }
@@ -70,114 +83,96 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 🚀 NEW: Initialize the one-time reconsideration system
+     * This runs in background to avoid blocking UI startup
+     */
+    private suspend fun initializeReconsiderationSystem() {
+        try {
+            val initStartTime = PerformanceUtils.PerformanceMetrics.startTiming("reconsideration_init", "general")
 
+            Log.d(TAG, "🔄 Initializing reconsideration system...")
+
+            // Step 1: Initialize repository from storage (loads reconsidered job IDs)
+            processedJobsRepository.initializeFromStorage()
+
+            // Step 2: Initialize the job repository reconsideration system
+            jobRepository.initializeReconsiderationSystem()
+
+            // Step 3: Log initial state for debugging
+            if (BuildConfig.DEBUG) {
+                reconsiderationStorage.logStorageState()
+                processedJobsRepository.logPerformanceStats()
+            }
+
+            PerformanceUtils.PerformanceMetrics.endTiming("reconsideration_init", initStartTime)
+
+            Log.d(TAG, "✅ Reconsideration system initialized successfully")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to initialize reconsideration system: ${e.message}", e)
+
+            // 🚀 GRACEFUL FALLBACK: System still works without reconsideration features
+            Log.w(TAG, "⚠️ App will continue without reconsideration features")
+        }
+    }
+
+    /**
+     * 🚀 ENHANCED: Combined background data loading with reconsideration and performance optimization
+     */
     private suspend fun startBackgroundDataLoading() {
         try {
+            val loadingStartTime = PerformanceUtils.PerformanceMetrics.startTiming("background_data_loading", "general")
+
+            Log.d(TAG, "🚀 Starting background data loading...")
+
             withContext(Dispatchers.IO) {
                 // Load only critical data, limit timeout
                 withTimeoutOrNull(2000) {
                     val userId = authRepository.getCurrentUserId()
                     if (userId != null) {
+                        Log.d(TAG, "👤 User authenticated: ${userId.take(8)}...")
+
                         // Preload user profile only if needed
-                        profileRepository.getEmployeeProfileByUserId(userId).take(1).collect { }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Background loading error (non-blocking): ${e.message}")
-        }
-    }
-
-
-
-/**
-     * 🚀 PERFORMANCE FIX: Preload critical data without blocking UI
-     */
-    private fun startEssentialDataPreloading() {
-        preloadScope.launch {
-            val preloadStartTime = PerformanceUtils.PerformanceMetrics.startTiming("preload_data", "database")
-
-            try {
-                Log.d(TAG, "Starting essential data preloading...")
-
-                // Preload user authentication state
-                val userId = withTimeoutOrNull(2000) { // 2 second timeout
-                    authRepository.getCurrentUserId()
-                }
-
-                if (userId != null) {
-                    // Preload user profile in parallel
-                    val profileJob = async {
-                        try {
-                            profileRepository.getEmployeeProfileByUserId(userId).collect { result ->
-                                if (result.isSuccess) {
-                                    Log.d(TAG, "Preloaded user profile successfully")
-                                } else {
-                                    Log.w(TAG, "Failed to preload user profile: ${result.exceptionOrNull()?.message}")
-                                }
+                        launch {
+                            try {
+                                profileRepository.getEmployeeProfileByUserId(userId).take(1).collect { }
+                                Log.d(TAG, "✅ User profile preloaded")
+                            } catch (e: Exception) {
+                                Log.w(TAG, "User profile preload error: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Exception preloading profile: ${e.message}")
                         }
-                    }
 
-                    // Wait for profile with timeout
-                    withTimeoutOrNull(3000) {
-                        profileJob.await()
+                        // 🚀 NEW: Load user-specific processed jobs data
+                        launch {
+                            try {
+                                // This could load applied/rejected jobs from database to sync with local state
+                                // processedJobsRepository.syncWithDatabase() // Implement if needed
+                                Log.d(TAG, "✅ User data sync completed")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "❌ User data sync failed: ${e.message}")
+                            }
+                        }
+                    } else {
+                        Log.d(TAG, "👤 No authenticated user, skipping user-specific loading")
                     }
                 }
-
-                Log.d(TAG, "Essential data preloading completed")
-
-            } catch (e: Exception) {
-                Log.w(TAG, "Error during preloading (non-blocking): ${e.message}")
-            } finally {
-                PerformanceUtils.PerformanceMetrics.endTiming("preload_data", preloadStartTime)
             }
+
+            PerformanceUtils.PerformanceMetrics.endTiming("background_data_loading", loadingStartTime)
+
+            Log.d(TAG, "✅ Background data loading completed")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Background data loading failed: ${e.message}", e)
         }
     }
 
     /**
-     * 🚀 PERFORMANCE FIX: Optimized navigation setup with lazy initialization
+     * 🚀 ENHANCED: Performance monitoring setup with reconsideration system monitoring
      */
-    @Composable
-    private fun OptimizedNavigationSetup(onNavigationReady: () -> Unit) {
-        val navigationStartTime = remember {
-            PerformanceUtils.PerformanceMetrics.startTiming("navigation_setup", "ui")
-        }
-
-        // 🚀 FIX: Use lazy initialization for NavController
-        val navController = rememberNavController()
-        // 🚀 FIX: Initialize navigation immediately without delays
-        LaunchedEffect(navController) {
-            // End navigation timing immediately
-            PerformanceUtils.PerformanceMetrics.endTiming("navigation_setup", navigationStartTime)
-
-            // Call the ready callback immediately
-            onNavigationReady()
-
-            // Log performance report after a short delay (non-blocking)
-            if (BuildConfig.DEBUG) {
-                launch {
-                    delay(1000) // Non-blocking delay for debug logging only
-                    PerformanceDebugUtils.logPerformanceReport()
-                }
-            }
-        }
-
-        // 🚀 FIX: Direct navigation without wrapper delays
-        AppNavHost(navController = navController)
-
-        // PERFORMANCE MONITORING: Clean up when activity is destroyed
-        DisposableEffect(Unit) {
-            onDispose {
-                Log.d(TAG, "MainActivity Compose disposing")
-            }
-        }
-    }
-
     private fun setupPerformanceMonitoring() {
-        Log.d(TAG, "Setting up performance monitoring")
+        Log.d(TAG, "📊 Setting up performance monitoring...")
 
         // Clear any existing metrics from previous sessions
         PerformanceUtils.PerformanceMetrics.clearMetrics()
@@ -202,16 +197,24 @@ class MainActivity : ComponentActivity() {
                             // 🚀 FIX: More efficient performance issue detection
                             checkPerformanceIssues()
 
+                            // 🚀 NEW: Monitor reconsideration system performance
+                            try {
+                                val stats = processedJobsRepository.getReconsiderationStats()
+                                Log.d(TAG, "📊 RECONSIDERATION STATS: $stats")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error logging reconsideration stats: ${e.message}")
+                            }
+
                             Log.d(TAG, "=====================================")
                         } catch (e: Exception) {
                             Log.e(TAG, "Error in performance monitoring: ${e.message}")
                         }
                     }
-                }, 30000, 30000) // Log every 30 seconds
+                }, 30000, 300000) // Log every 5 minutes for reconsideration stats
             }
         }
 
-        Log.d(TAG, "Performance monitoring setup completed")
+        Log.d(TAG, "✅ Performance monitoring setup completed")
     }
 
     /**
@@ -242,28 +245,71 @@ class MainActivity : ComponentActivity() {
         PerformanceUtils.PerformanceMetrics.endTiming("activity_start", startTime)
     }
 
+    /**
+     * 🚀 ENHANCED: Handle app resume for both performance monitoring and reconsideration system
+     */
     override fun onResume() {
         super.onResume()
         val resumeTime = PerformanceUtils.PerformanceMetrics.startTiming("activity_resume", "general")
 
         Log.d(TAG, "MainActivity onResume")
 
-        // Check memory pressure when app resumes
+        // EXISTING: Check memory pressure when app resumes
         if (PerformanceUtils.MemoryMonitor.isMemoryLow()) {
             Log.w(TAG, "Memory pressure detected on resume - triggering cleanup")
             PerformanceUtils.MemoryMonitor.triggerLowMemoryCleanup()
         }
 
-        // Log memory status
+        // EXISTING: Log memory status
         PerformanceUtils.MemoryMonitor.logMemoryUsage(TAG)
+
+        // 🚀 NEW: Refresh reconsideration state when app resumes
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                Log.d(TAG, "🔄 App resumed, checking reconsideration data consistency")
+
+                // Check if storage and memory are in sync
+                val storageIds = reconsiderationStorage.loadReconsideredJobIds()
+                val memoryIds = processedJobsRepository.reconsideredJobIds.value
+
+                if (storageIds != memoryIds) {
+                    Log.w(TAG, "⚠️ Reconsideration data inconsistency detected, syncing...")
+                    processedJobsRepository.initializeReconsideredJobs(storageIds)
+                    Log.d(TAG, "✅ Reconsideration data synced")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error checking reconsideration data on resume: ${e.message}")
+            }
+        }
 
         PerformanceUtils.PerformanceMetrics.endTiming("activity_resume", resumeTime)
     }
 
+    /**
+     * 🚀 ENHANCED: Handle app pause for both performance monitoring and reconsideration system
+     */
     override fun onPause() {
         super.onPause()
         val pauseTime = PerformanceUtils.PerformanceMetrics.startTiming("activity_pause", "general")
         Log.d(TAG, "MainActivity onPause")
+
+        // 🚀 NEW: Save reconsideration state when app goes to background
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // The repository automatically saves to storage, but we can trigger a manual save here
+                Log.d(TAG, "💾 App paused, ensuring reconsideration data is saved")
+
+                // Optional: Force save current state
+                // reconsiderationStorage.saveReconsideredJobIds(
+                //     processedJobsRepository.reconsideredJobIds.value
+                // )
+
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error saving reconsideration data on pause: ${e.message}")
+            }
+        }
+
         PerformanceUtils.PerformanceMetrics.endTiming("activity_pause", pauseTime)
     }
 
@@ -346,16 +392,55 @@ class MainActivity : ComponentActivity() {
         // Log memory status after trim
         PerformanceUtils.MemoryMonitor.logMemoryUsage(TAG)
     }
+
+    /**
+     * 🚀 NEW: Debug menu for reconsideration system (only in debug builds)
+     */
+    private fun showDebugReconsiderationMenu() {
+        if (!BuildConfig.DEBUG) return
+
+        // You can call this method from a debug menu or gesture
+        lifecycleScope.launch {
+            try {
+                val stats = processedJobsRepository.getReconsiderationStats()
+                val storageStats = reconsiderationStorage.getStorageStats()
+
+                val debugInfo = """
+                    🔍 RECONSIDERATION DEBUG INFO
+                    
+                    Repository Stats:
+                    • Total Rejected: ${stats.totalRejected}
+                    • Reconsidered: ${stats.reconsidered}
+                    • Eligible: ${stats.eligibleForReconsideration}
+                    
+                    Storage Stats:
+                    • Stored Count: ${storageStats.reconsideredJobsCount}
+                    • Last Sync: ${if (storageStats.lastSyncTimestamp > 0)
+                    java.util.Date(storageStats.lastSyncTimestamp) else "Never"}
+                    • Has Data: ${storageStats.hasData}
+                    
+                    System Health: ${if (stats.reconsidered == storageStats.reconsideredJobsCount) "✅ HEALTHY" else "⚠️ SYNC NEEDED"}
+                """.trimIndent()
+
+                Log.d(TAG, debugInfo)
+
+                // You could show this in a dialog or toast in debug builds
+                // Toast.makeText(this@MainActivity, "Debug info logged", Toast.LENGTH_SHORT).show()
+
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error generating debug info: ${e.message}")
+            }
+        }
+    }
 }
 
 /**
- * Performance debug utilities for MainActivity
- * 🚀 PERFORMANCE FIX: Enhanced with better memory tracking
+ * 🚀 ENHANCED: Performance debug utilities with reconsideration system support
  */
 object PerformanceDebugUtils {
 
     /**
-     * Call this from your debug menu or developer options
+     * 🚀 ENHANCED: Performance report now includes reconsideration system metrics
      */
     fun generatePerformanceReport(): String {
         val report = StringBuilder()

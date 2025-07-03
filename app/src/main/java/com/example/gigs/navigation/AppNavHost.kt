@@ -60,17 +60,23 @@ import com.example.gigs.ui.screens.jobs.JobHistoryScreen
 import com.example.gigs.ui.screens.notifications.NotificationsScreen
 import androidx.navigation.navArgument
 import com.example.gigs.data.repository.JobRepository
+import com.example.gigs.navigation.Screen.MyJobsFiltered
+import com.example.gigs.ui.screens.dashboard.EmployerActivitiesScreen
 import com.example.gigs.ui.screens.jobs.AllApplicationsScreen
 import com.example.gigs.ui.screens.jobs.EmployerJobDetailsScreen
 import com.example.gigs.ui.screens.jobs.JobApplicationDetailsScreen
 import com.example.gigs.ui.screens.jobs.JobApplicationsScreen
 import com.example.gigs.ui.screens.jobs.JobHistoryScreen
+import com.example.gigs.ui.screens.jobs.MyJobsScreen
 import com.example.gigs.ui.screens.profile.ApplicantProfileScreen
 import com.example.gigs.ui.screens.profile.EditEmployerProfileScreen
 import com.example.gigs.viewmodel.JobViewModel
+import com.example.gigs.viewmodel.EmployerDashboardViewModel
 
 // Add applications view screen route
 object ApplicationsView : Screen("applications_view")
+object EmployerActivitiesView : Screen("employer_activities_view")
+
 
 @Composable
 fun AppNavHost(
@@ -200,6 +206,13 @@ fun AppNavHost(
             )
         }
 
+        composable(EmployerActivitiesView.route) {
+            EmployerActivitiesScreen(
+                viewModel = hiltViewModel<EmployerDashboardViewModel>(),
+                onBackPressed = { navController.popBackStack() }
+            )
+        }
+
         composable(Screen.PhoneAuth.route) {
             PhoneAuthScreen(
                 authViewModel = authViewModel,
@@ -297,8 +310,8 @@ fun AppNavHost(
             EmployeeProfileSetupScreen(
                 profileViewModel = profileViewModel,
                 onProfileCreated = { district ->
-                    // Navigate to job listing with the selected district
-                    navController.navigate(Screen.JobListing.createRoute(district)) {
+                    // Navigate to EmployeeHome with swipeable cards instead of JobListing
+                    navController.navigate(Screen.EmployeeHome.route) {
                         popUpTo(0) { inclusive = true }
                     }
                 }
@@ -318,24 +331,32 @@ fun AppNavHost(
         }
 
         // Job History Screen Route
+        // JobHistory route
         composable(Screen.JobHistory.route) {
             JobHistoryScreen(
-                onJobSelected = { jobId -> navController.navigate(Screen.JobDetails.createRoute(jobId)) },
+                // REMOVED: applicationRepository parameter
+                onJobSelected = { jobId ->
+                    navController.navigate(Screen.JobDetails.createRoute(jobId))
+                },
                 onApplicationSelected = { applicationId ->
                     navController.navigate(Screen.JobApplicationDetails.createRoute(applicationId))
                 },
-                onBackPressed = { navController.popBackStack() }
+                onBackPressed = {
+                    navController.popBackStack()
+                }
             )
         }
 
         // Main app screens
         composable(Screen.EmployeeHome.route) {
-            // Get the JobRepository instance
-            val jobRepository: JobRepository = hiltViewModel<JobViewModel>().jobRepository
+            // Get the JobRepository instance from JobViewModel
+            val jobViewModel: JobViewModel = hiltViewModel()
+            val jobRepository = jobViewModel.jobRepository
 
             EmployeeHomeScreen(
                 authViewModel = authViewModel,
-                jobRepository = jobRepository, // Add this
+                jobRepository = jobRepository,
+                // REMOVED: applicationRepository parameter
                 onSignOut = {
                     navController.navigate(Screen.Welcome.route) {
                         popUpTo(0) { inclusive = true }
@@ -356,7 +377,7 @@ fun AppNavHost(
                 onNavigateToJobHistory = {
                     navController.navigate(Screen.JobHistory.route)
                 },
-                onNavigateToJobDetails = { jobId ->  // Add this
+                onNavigateToJobDetails = { jobId ->
                     navController.navigate(Screen.JobDetails.createRoute(jobId))
                 }
             )
@@ -466,6 +487,15 @@ fun AppNavHost(
                 },
                 onViewAllApplications = {
                     navController.navigate(Screen.AllApplications.route)
+                },
+                // 🚀 FIXED: Navigation callbacks using lambda parameters
+                onNavigateToActiveJobs = { count ->
+                    // Navigate to MyJobs with ACTIVE_ONLY filter
+                    navController.navigate(MyJobsFiltered.createRoute("ACTIVE_ONLY", "Active Jobs ($count)"))
+                },
+                onNavigateToAllJobs = { count ->
+                    // Navigate to MyJobs with ALL_JOBS filter
+                    navController.navigate(MyJobsFiltered.createRoute("ALL_JOBS", "All Jobs ($count)"))
                 }
             )
         }
@@ -656,25 +686,69 @@ fun AppNavHost(
         }
 
 
+
         composable(Screen.EmployerDashboard.route) {
             EmployerDashboardScreen(
                 dashboardViewModel = hiltViewModel(),
                 applicationsViewModel = hiltViewModel(),
                 onViewAllJobs = {
-                    // Navigate to jobs list when implemented
+                    println("🚀 NAVIGATION: Navigating to all applications (jobs view)...")
+                    navController.navigate(Screen.AllApplications.route)
                 },
                 onViewAllActivities = {
-                    // Navigate to activities list when implemented
+                    println("🚀 NAVIGATION: Navigating to activities view...")
+                    navController.navigate(Screen.Notifications.route)
                 },
-                onCreateJob = { navController.navigate(Screen.CreateJob.route) },
-                onNavigateToNotifications = { navController.navigate(Screen.Notifications.route) },
-                onNavigateToMessages = { navController.navigate(Screen.Conversations.route) },
+                onNavigateToAllApplications = {
+                    println("🚀 NAVIGATION: Navigating to all applications...")
+                    navController.navigate(Screen.AllApplications.route)
+                },
+                onCreateJob = {
+                    navController.navigate(Screen.CreateJob.route)
+                },
+                onNavigateToNotifications = {
+                    navController.navigate(Screen.Notifications.route)
+                },
+                onNavigateToMessages = {
+                    navController.navigate(Screen.Conversations.route)
+                },
                 onViewApplication = { applicationId ->
-                    // Navigate to application details when implemented
+                    println("🚀 NAVIGATION: Navigating to application details for: $applicationId")
+                    navController.navigate(Screen.JobApplicationDetails.createRoute(applicationId))
                 },
-                onBackPressed = { navController.popBackStack() }
+                onBackPressed = {
+                    navController.popBackStack()
+                },
+                onNavigateToEditProfile = {
+                    println("🚀 NAVIGATION: Navigating to edit employer profile from dashboard...")
+                    navController.navigate(Screen.EditEmployerProfile.route)
+                },
+                // 🚀 NEW: Add navigation callback for MyJobs
+                onNavigateToMyJobs = { filter, title ->
+                    println("🚀 NAVIGATION: Navigating to MyJobs with filter: $filter, title: $title")
+                    navController.navigate(MyJobsFiltered.createRoute(filter, title))
+                }
             )
         }
+
+        // 🚀 NEW: Add the MyJobsFiltered route
+        composable(
+            route = MyJobsFiltered.route,
+            arguments = listOf(
+                navArgument("filter") { type = NavType.StringType },
+                navArgument("title") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val filter = backStackEntry.arguments?.getString("filter") ?: "ALL_JOBS"
+            val title = backStackEntry.arguments?.getString("title") ?: "My Jobs"
+
+            MyJobsScreen(
+                navController = navController,
+                filter = filter,
+                title = title
+            )
+        }
+
 
         // Applications View Screen
         composable(ApplicationsView.route) {
@@ -883,6 +957,58 @@ class ApplicationsViewModel @Inject constructor(
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
+
+    var selectedApplication by mutableStateOf<ApplicationWithJob?>(null)
+        private set
+
+    var otpInput by mutableStateOf("")
+    var otpError by mutableStateOf<String?>(null)
+    var workStarted by mutableStateOf(false)
+    var workCompleted by mutableStateOf(false)
+    var loading by mutableStateOf(false)
+    var statusMessage by mutableStateOf<String?>(null)
+
+    fun loadSelectedApplication(applicationId: String) {
+        viewModelScope.launch {
+            loading = true
+            val result = applicationRepository.getSelectedApplicationWithLocation(applicationId)
+            loading = false
+            if (result.isSuccess) {
+                selectedApplication = result.getOrNull()
+            } else {
+                statusMessage = result.exceptionOrNull()?.localizedMessage ?: "Error loading application"
+            }
+        }
+    }
+
+    fun startWork(applicationId: String) {
+        otpError = null
+        loading = true
+        viewModelScope.launch {
+            val result = applicationRepository.startWorkWithOtp(applicationId, otpInput)
+            loading = false
+            if (result.isSuccess) {
+                workStarted = true
+                statusMessage = "Work started. Timer running."
+            } else {
+                otpError = result.exceptionOrNull()?.localizedMessage ?: "OTP verification failed"
+            }
+        }
+    }
+
+    fun completeWork(applicationId: String) {
+        loading = true
+        viewModelScope.launch {
+            val result = applicationRepository.completeWork(applicationId)
+            loading = false
+            if (result.isSuccess) {
+                workCompleted = true
+                statusMessage = "Work completed!"
+            } else {
+                statusMessage = result.exceptionOrNull()?.localizedMessage ?: "Failed to complete work"
+            }
+        }
+    }
 
     fun loadAllApplications() {
         viewModelScope.launch {

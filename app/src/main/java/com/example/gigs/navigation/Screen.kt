@@ -1,5 +1,7 @@
 package com.example.gigs.navigation
 
+import android.net.Uri
+
 sealed class Screen(open val route: String) {
     object Welcome : Screen("welcome")
     object PhoneAuth : Screen("phone_auth")
@@ -19,6 +21,10 @@ sealed class Screen(open val route: String) {
     object EmployeeProfileSetup : Screen("employee_profile_setup")
     object EmployerProfileSetup : Screen("employer_profile_setup")
 
+    object MyJobsFiltered : Screen("my_jobs/{filter}/{title}") {
+        fun createRoute(filter: String, title: String): String =
+            "my_jobs/$filter/${Uri.encode(title)}"
+    }
     // New screens for added features
     object JobListing : Screen("job_listing/{district}") {
         fun createRoute(district: String): String = "job_listing/$district"

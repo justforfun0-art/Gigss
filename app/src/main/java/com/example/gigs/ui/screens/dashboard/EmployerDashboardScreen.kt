@@ -2,6 +2,11 @@ package com.example.gigs.ui.screens.dashboard
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.gigs.data.model.Activity
 import com.example.gigs.data.model.ApplicationWithJob
 import com.example.gigs.data.model.CategoryStat
@@ -27,11 +33,13 @@ import com.example.gigs.data.model.LocationStat
 import com.example.gigs.ui.components.DashboardCard
 import com.example.gigs.ui.components.DashboardEmptyStateMessage
 import com.example.gigs.ui.components.DashboardSectionHeader
+import com.example.gigs.utils.DateUtils
 import com.example.gigs.utils.DateUtils.formatDate
 import com.example.gigs.utils.DateUtils.formatTimeAgo
+import com.example.gigs.viewmodel.DashboardNavigationEvent
 import com.example.gigs.viewmodel.EmployerApplicationsViewModel
 import com.example.gigs.viewmodel.EmployerDashboardViewModel
-import com.example.gigs.viewmodel.ProfileViewModel
+import com.example.gigs.viewmodel.DashboardCardType
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,11 +48,15 @@ fun EmployerDashboardScreen(
     applicationsViewModel: EmployerApplicationsViewModel = hiltViewModel(),
     onViewAllJobs: () -> Unit,
     onViewAllActivities: () -> Unit,
+    onNavigateToAllApplications: () -> Unit,
     onCreateJob: () -> Unit,
     onNavigateToNotifications: () -> Unit,
     onNavigateToMessages: () -> Unit,
     onViewApplication: (String) -> Unit,
-    onBackPressed: () -> Unit
+    onBackPressed: () -> Unit,
+    onNavigateToEditProfile: () -> Unit,
+    // 🚀 NEW: Add navigation callbacks for dashboard cards
+    onNavigateToMyJobs: ((filter: String, title: String) -> Unit)? = null
 ) {
     // Collect state from the view models
     val totalJobs by dashboardViewModel.totalJobs.collectAsState()
@@ -53,20 +65,35 @@ fun EmployerDashboardScreen(
     val averageRating by dashboardViewModel.averageRating.collectAsState()
     val isLoading by dashboardViewModel.isLoading.collectAsState()
     val recentJobs by dashboardViewModel.recentJobs.collectAsState()
-    val recentActivities by dashboardViewModel.recentActivities.collectAsState(emptyList())
-    val locationStats by dashboardViewModel.locationStats.collectAsState(emptyList())
-    val categoryStats by dashboardViewModel.categoryStats.collectAsState(emptyList())
+    val recentActivities by dashboardViewModel.recentActivities.collectAsState()
+    val locationStats by dashboardViewModel.locationStats.collectAsState()
+    val categoryStats by dashboardViewModel.categoryStats.collectAsState()
 
     // Get applications data
     val recentApplications by applicationsViewModel.recentApplications.collectAsState()
-    val isLoadingApplications by applicationsViewModel.isLoading.collectAsState(false)
+    val isLoadingApplications by applicationsViewModel.isLoading.collectAsState()
 
     // Get employer profile data
     val employerProfile by dashboardViewModel.employerProfile.collectAsState()
-    val isProfileLoading by dashboardViewModel.isProfileLoading.collectAsState(false)
+    val isProfileLoading by dashboardViewModel.isProfileLoading.collectAsState()
+
+    // 🚀 NEW: Handle navigation events from ViewModel
+    LaunchedEffect(Unit) {
+        dashboardViewModel.navigationEvent.collect { event ->
+            when (event) {
+                is DashboardNavigationEvent.NavigateToMyJobs -> {
+                    onNavigateToMyJobs?.invoke(event.filter.name, event.title)
+                }
+                is DashboardNavigationEvent.NavigateToApplications -> {
+                    onNavigateToAllApplications()
+                }
+            }
+        }
+    }
 
     // Load dashboard data when screen is shown
     LaunchedEffect(Unit) {
+        println("🚀 DASHBOARD: Loading dashboard data...")
         dashboardViewModel.loadDashboardData()
         applicationsViewModel.loadRecentApplications(5)
     }
@@ -86,6 +113,13 @@ fun EmployerDashboardScreen(
                     }
                     IconButton(onClick = onNavigateToMessages) {
                         Icon(Icons.Default.Email, contentDescription = "Messages")
+                    }
+                    // 🚀 DEBUG: Add refresh button for testing
+                    IconButton(onClick = {
+                        dashboardViewModel.refreshDashboard()
+                        println("🔄 DASHBOARD: Manual refresh triggered")
+                    }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                     }
                 }
             )
@@ -114,11 +148,11 @@ fun EmployerDashboardScreen(
                     .padding(paddingValues)
                     .verticalScroll(rememberScrollState())
             ) {
-                // Profile Section
+                // 🚀 Profile Section
                 EmployerProfileSection(
                     name = employerProfile?.companyName ?: "Your Company",
                     location = "${employerProfile?.district ?: "District"}, ${employerProfile?.state ?: "State"}",
-                    onEditProfileClick = { /* Navigate to edit profile */ }
+                    onEditProfileClick = onNavigateToEditProfile
                 )
 
                 Divider(modifier = Modifier.padding(horizontal = 16.dp))
@@ -130,52 +164,63 @@ fun EmployerDashboardScreen(
                     modifier = Modifier.padding(16.dp)
                 )
 
-                // Stats cards in a grid
-                Row(
+                // 🚀 UPDATED: Dashboard cards with click handlers using LazyVerticalGrid
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier
-                        .fillMaxWidth()
                         .padding(horizontal = 16.dp)
+                        .height(200.dp), // Fixed height for the grid
+                    userScrollEnabled = false // Disable scrolling within the grid
                 ) {
-                    DashboardCard(
-                        icon = Icons.Default.Work,
-                        value = totalJobs.toString(),
-                        label = "Total Jobs",
-                        modifier = Modifier.weight(1f),
-                        onClick = onViewAllJobs
-                    )
+                    // 🚀 UPDATED: Total Jobs Card - clickable
+                    item {
+                        DashboardCard(
+                            icon = Icons.Default.Work,
+                            value = totalJobs.toString(),
+                            label = "Total Jobs",
+                            onClick = {
+                                dashboardViewModel.onDashboardCardClicked(DashboardCardType.TOTAL_JOBS)
+                            }
+                        )
+                    }
 
-                    Spacer(modifier = Modifier.width(8.dp))
+                    // 🚀 UPDATED: Active Jobs Card - clickable
+                    item {
+                        DashboardCard(
+                            icon = Icons.Default.CheckCircle,
+                            value = activeJobs.toString(),
+                            label = "Active Jobs",
+                            onClick = {
+                                dashboardViewModel.onDashboardCardClicked(DashboardCardType.ACTIVE_JOBS)
+                            }
+                        )
+                    }
 
-                    DashboardCard(
-                        icon = Icons.Default.CheckCircle,
-                        value = activeJobs.toString(),
-                        label = "Active Jobs",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                    // 🚀 UPDATED: Applications Card - clickable
+                    item {
+                        DashboardCard(
+                            icon = Icons.Default.Description,
+                            value = totalApplications.toString(),
+                            label = "Applications",
+                            onClick = {
+                                dashboardViewModel.onDashboardCardClicked(DashboardCardType.APPLICATIONS)
+                            }
+                        )
+                    }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                ) {
-                    DashboardCard(
-                        icon = Icons.Default.Description,
-                        value = totalApplications.toString(),
-                        label = "Applications",
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    DashboardCard(
-                        icon = Icons.Default.Star,
-                        value = String.format("%.1f", averageRating),
-                        label = "Rating",
-                        modifier = Modifier.weight(1f)
-                    )
+                    // Rating Card (optional click)
+                    item {
+                        DashboardCard(
+                            icon = Icons.Default.Star,
+                            value = String.format("%.1f", averageRating),
+                            label = "Rating",
+                            onClick = {
+                                dashboardViewModel.onDashboardCardClicked(DashboardCardType.RATING)
+                            }
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -230,7 +275,7 @@ fun EmployerDashboardScreen(
                 if (!isLoadingApplications) {
                     DashboardSectionHeader(
                         title = "Recent Applications",
-                        onViewAll = { /* Navigate to all applications */ }
+                        onViewAll = onNavigateToAllApplications
                     )
 
                     if (recentApplications.isEmpty()) {
@@ -284,36 +329,38 @@ fun EmployerDashboardScreen(
                     }
                 }
 
-                // Stats Sections - Added from paste.txt
+                // Stats Sections
                 if (locationStats.isNotEmpty() || categoryStats.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Text(
-                        text = "Applications by Location",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
+                    if (locationStats.isNotEmpty()) {
+                        Text(
+                            text = "Applications by Location",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                    // Location stats chart
-                    LocationStatsChart(stats = locationStats)
+                        LocationStatsChart(stats = locationStats)
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
 
-                    Text(
-                        text = "Applications by Category",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
+                    if (categoryStats.isNotEmpty()) {
+                        Text(
+                            text = "Applications by Category",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                    // Category stats chart
-                    CategoryStatsChart(stats = categoryStats)
+                        CategoryStatsChart(stats = categoryStats)
+                    }
                 }
 
-                // Recent Activities Section - Added from paste.txt
+                // Recent Activities Section
                 if (recentActivities.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -332,32 +379,15 @@ fun EmployerDashboardScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Create Job Button
-                Button(
-                    onClick = onCreateJob,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp)
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Text("Create New Job")
-                }
-
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
     }
 }
 
+/**
+ * 🚀 Employer profile section with working edit navigation
+ */
 @Composable
 fun EmployerProfileSection(
     name: String,
@@ -416,9 +446,12 @@ fun EmployerProfileSection(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Edit Profile button
+        // Edit Profile button with working navigation
         Button(
-            onClick = onEditProfileClick,
+            onClick = {
+                println("🚀 NAVIGATION: Edit profile button clicked")
+                onEditProfileClick()
+            },
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -505,7 +538,7 @@ fun JobItem(
 
                 if (job.createdAt != null) {
                     Text(
-                        text = "Posted on ${formatDate(job.createdAt)}",
+                        text = "Posted on ${DateUtils.formatDate(job.createdAt)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -586,7 +619,9 @@ fun ApplicationItem(
 
             if (application.appliedAt != null) {
                 Text(
-                    text = "Applied on ${formatDate(application.appliedAt)}",
+                    text = application.appliedAt?.let {
+                        DateUtils.formatApplicationDate(it)
+                    } ?: "Applied recently",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

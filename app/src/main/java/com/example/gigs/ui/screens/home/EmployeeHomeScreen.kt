@@ -25,30 +25,34 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.example.gigs.data.model.ApplicationStatus
+import com.example.gigs.data.model.ApplicationWithJob
 import com.example.gigs.data.model.EmployeeProfile
 import com.example.gigs.data.model.Job
 import com.example.gigs.data.model.JobAlert
 import com.example.gigs.data.model.JobWithEmployer
 import com.example.gigs.data.model.WorkPreference
+import com.example.gigs.data.repository.ApplicationRepository
 import com.example.gigs.data.repository.JobRepository
 import com.example.gigs.ui.components.*
 import com.example.gigs.ui.screens.dashboard.JobItem
 import com.example.gigs.viewmodel.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+// Fixed EmployeeHomeScreen.kt - Main function with proper Accept Job handling
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmployeeHomeScreen(
     authViewModel: AuthViewModel,
-    jobRepository: JobRepository, // Add this parameter
+    jobRepository: JobRepository,
     onSignOut: () -> Unit,
     onNavigateToDashboard: () -> Unit,
     onNavigateToJobListing: (String) -> Unit,
     onNavigateToMessages: () -> Unit = {},
     onNavigateToNotifications: () -> Unit = {},
     onNavigateToJobHistory: () -> Unit = {},
-    onNavigateToJobDetails: (String) -> Unit = {} // Add this parameter
+    onNavigateToJobDetails: (String) -> Unit = {}
 ) {
     var selectedTab by remember { mutableStateOf(0) }
     val profileViewModel: ProfileViewModel = hiltViewModel()
@@ -56,11 +60,61 @@ fun EmployeeHomeScreen(
     val processedJobsViewModel: ProcessedJobsViewModel = hiltViewModel()
     val jobHistoryViewModel: JobHistoryViewModel = hiltViewModel()
 
+    // Get ApplicationRepository through JobViewModel
+    val applicationRepository = jobViewModel.applicationRepository
+
     val employeeProfile by profileViewModel.employeeProfile.collectAsState()
 
-    // Load profile when screen launches
+    // Track multiple selected jobs instead of single active job
+    var selectedJobs by remember { mutableStateOf<List<ApplicationWithJob>>(emptyList()) }
+    var isLoadingSelectedJobs by remember { mutableStateOf(false) }
+    var selectedJobError by remember { mutableStateOf<String?>(null) }
+    var currentSelectedJobIndex by remember { mutableStateOf(0) }
+
+    val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Load selected jobs instead of single active job
     LaunchedEffect(Unit) {
         profileViewModel.getEmployeeProfile()
+
+        // Load selected jobs immediately
+        try {
+            isLoadingSelectedJobs = true
+            Log.d("EmployeeHomeScreen", "🚀 Initial loading - refreshing application history")
+
+            jobHistoryViewModel.refreshApplicationHistory()
+            delay(1000) // Give more time for data to load
+
+            val selectedJobsList = jobHistoryViewModel.getSelectedJobs()
+            selectedJobs = selectedJobsList
+
+            Log.d("EmployeeHomeScreen", "🚀 Found ${selectedJobsList.size} selected jobs")
+
+        } catch (e: Exception) {
+            selectedJobError = "Failed to load selected jobs: ${e.message}"
+            Log.e("EmployeeHomeScreen", "❌ Error loading selected jobs: ${e.message}")
+        } finally {
+            isLoadingSelectedJobs = false
+        }
+    }
+
+    // Refresh selected jobs when switching to home tab
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 0) { // Home tab
+            Log.d("EmployeeHomeScreen", "🚀 Home tab selected, checking for selected job updates")
+            try {
+                jobHistoryViewModel.refreshApplicationHistory()
+                delay(500)
+                val refreshedSelectedJobs = jobHistoryViewModel.getSelectedJobs()
+                if (refreshedSelectedJobs != selectedJobs) {
+                    selectedJobs = refreshedSelectedJobs
+                    Log.d("EmployeeHomeScreen", "🚀 Selected jobs refreshed: ${refreshedSelectedJobs.size} jobs")
+                }
+            } catch (e: Exception) {
+                Log.e("EmployeeHomeScreen", "❌ Error refreshing selected jobs on tab switch: ${e.message}")
+            }
+        }
     }
 
     Scaffold(
@@ -68,7 +122,6 @@ fun EmployeeHomeScreen(
             TopAppBar(
                 title = { Text("GigWork") },
                 actions = {
-                    // History button in top app bar
                     IconButton(onClick = onNavigateToJobHistory) {
                         Icon(
                             imageVector = Icons.Default.History,
@@ -88,6 +141,7 @@ fun EmployeeHomeScreen(
                 }
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(
@@ -151,43 +205,729 @@ fun EmployeeHomeScreen(
             }
         }
     ) { paddingValues ->
-        when (selectedTab) {
-            0 -> EnhancedEmployeeHomeTab(
-                modifier = Modifier.padding(paddingValues),
-                jobViewModel = jobViewModel,
-                processedJobsViewModel = processedJobsViewModel,
-                jobHistoryViewModel = jobHistoryViewModel,
-                jobRepository = jobRepository,
-                onJobDetails = onNavigateToJobDetails,
-                onViewJobHistory = onNavigateToJobHistory,
-                onNavigateToJobListing = onNavigateToJobListing,
-                onNavigateToDashboard = onNavigateToDashboard
-            )
-            1 -> EmployeeJobsTab(
-                modifier = Modifier.padding(paddingValues),
-                district = employeeProfile?.district ?: "",
-                onJobSelected = onNavigateToJobDetails
-            )
-            2 -> EmployeeProfileTab(
-                modifier = Modifier.padding(paddingValues),
-                profile = employeeProfile
-            )
-            3 -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-                LaunchedEffect(Unit) {
-                    onNavigateToJobHistory()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            // Show selected jobs section at the top (always visible)
+            if (selectedJobs.isNotEmpty()) {
+                SelectedJobsSection(
+                    selectedJobs = selectedJobs,
+                    currentIndex = currentSelectedJobIndex,
+                    onPrevious = {
+                        if (currentSelectedJobIndex > 0) {
+                            currentSelectedJobIndex--
+                        }
+                    },
+                    onNext = {
+                        if (currentSelectedJobIndex < selectedJobs.size - 1) {
+                            currentSelectedJobIndex++
+                        }
+                    },
+                    // 🚀 FIXED: Accept Job implementation using SELECTED status
+                    onAcceptJob = { jobIndex ->
+                        val selectedJob = selectedJobs[jobIndex]
+                        coroutineScope.launch {
+                            try {
+                                isLoadingSelectedJobs = true
+                                selectedJobError = null
+
+                                Log.d("EmployeeHomeScreen", "🚀 Accepting job: ${selectedJob.id}")
+
+                                // Check for date conflicts
+                                val hasConflict = checkJobDateConflict(selectedJobs, selectedJob)
+                                if (hasConflict) {
+                                    snackbarHostState.showSnackbar(
+                                        "Cannot accept job: You have another job on the same date/time",
+                                        duration = SnackbarDuration.Long
+                                    )
+                                    return@launch
+                                }
+
+                                // 🚀 FIXED: Accept the job (update status to ACCEPTED, not HIRED)
+                                applicationRepository.updateEmployeeApplicationStatus(
+                                    selectedJob.jobId,
+                                    "ACCEPTED"  // Changed from HIRED to ACCEPTED
+                                ).collect { updateResult ->
+                                    if (updateResult.isSuccess) {
+                                        snackbarHostState.showSnackbar("Job accepted successfully!")
+
+                                        // Refresh selected jobs
+                                        jobHistoryViewModel.refreshApplicationHistory()
+                                        delay(500)
+                                        selectedJobs = jobHistoryViewModel.getSelectedJobs()
+
+                                        Log.d("EmployeeHomeScreen", "✅ Job accepted and status updated to ACCEPTED")
+                                    } else {
+                                        val errorMsg = updateResult.exceptionOrNull()?.message ?: "Failed to accept job"
+                                        selectedJobError = errorMsg
+                                        snackbarHostState.showSnackbar(
+                                            "Failed to accept job: $errorMsg",
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        Log.e("EmployeeHomeScreen", "❌ Job acceptance failed: $errorMsg")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                val errorMsg = e.message ?: "Unknown error occurred"
+                                selectedJobError = errorMsg
+                                snackbarHostState.showSnackbar(
+                                    "Error accepting job: $errorMsg",
+                                    duration = SnackbarDuration.Long
+                                )
+                                Log.e("EmployeeHomeScreen", "❌ Exception accepting job: $errorMsg", e)
+                            } finally {
+                                isLoadingSelectedJobs = false
+                            }
+                        }
+                    },
+                    onStartWork = { jobIndex, otp ->
+                        val selectedJob = selectedJobs[jobIndex]
+                        coroutineScope.launch {
+                            isLoadingSelectedJobs = true
+                            selectedJobError = null
+
+                            try {
+                                Log.d("EmployeeHomeScreen", "🚀 Starting work with OTP: '$otp' for job: ${selectedJob.id}")
+
+                                val result = applicationRepository.startWorkWithOtp(selectedJob.id, otp)
+
+                                Log.d("EmployeeHomeScreen", "🚀 OTP verification result: ${result.isSuccess}")
+
+                                if (result.isSuccess) {
+                                    snackbarHostState.showSnackbar("Work started successfully!")
+
+                                    // Wait and refresh to get updated status
+                                    delay(1000)
+                                    jobHistoryViewModel.refreshApplicationHistory()
+                                    delay(500)
+
+                                    selectedJobs = jobHistoryViewModel.getSelectedJobs()
+
+                                    Log.d("EmployeeHomeScreen", "🚀 Selected jobs updated after work start")
+
+                                } else {
+                                    val errorMessage = result.exceptionOrNull()?.message ?: "Invalid OTP or verification failed"
+                                    Log.e("EmployeeHomeScreen", "❌ OTP verification failed: $errorMessage")
+
+                                    selectedJobError = errorMessage
+                                    snackbarHostState.showSnackbar(
+                                        message = errorMessage,
+                                        duration = SnackbarDuration.Long
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                val errorMessage = e.message ?: "Failed to start work"
+                                Log.e("EmployeeHomeScreen", "❌ Exception during OTP verification: $errorMessage", e)
+
+                                selectedJobError = errorMessage
+                                snackbarHostState.showSnackbar(
+                                    message = "Error: $errorMessage",
+                                    duration = SnackbarDuration.Long
+                                )
+                            } finally {
+                                isLoadingSelectedJobs = false
+                            }
+                        }
+                    },
+                    onCompleteWork = { jobIndex ->
+                        val selectedJob = selectedJobs[jobIndex]
+                        coroutineScope.launch {
+                            isLoadingSelectedJobs = true
+                            selectedJobError = null
+
+                            try {
+                                Log.d("EmployeeHomeScreen", "🚀 Completing work for job: ${selectedJob.id}")
+
+                                val result = applicationRepository.completeWork(selectedJob.id)
+
+                                if (result.isSuccess) {
+                                    snackbarHostState.showSnackbar("Work completed successfully!")
+
+                                    // Refresh and update selected jobs
+                                    jobHistoryViewModel.refreshApplicationHistory()
+                                    selectedJobs = jobHistoryViewModel.getSelectedJobs()
+
+                                    Log.d("EmployeeHomeScreen", "🚀 Work completed, selected jobs updated")
+
+                                } else {
+                                    val errorMessage = result.exceptionOrNull()?.message ?: "Failed to complete work"
+                                    Log.e("EmployeeHomeScreen", "❌ Work completion failed: $errorMessage")
+
+                                    selectedJobError = errorMessage
+                                    snackbarHostState.showSnackbar(
+                                        message = errorMessage,
+                                        duration = SnackbarDuration.Long
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                val errorMessage = e.message ?: "Failed to complete work"
+                                Log.e("EmployeeHomeScreen", "❌ Exception during work completion: $errorMessage", e)
+
+                                selectedJobError = errorMessage
+                                snackbarHostState.showSnackbar(
+                                    message = "Error: $errorMessage",
+                                    duration = SnackbarDuration.Long
+                                )
+                            } finally {
+                                isLoadingSelectedJobs = false
+                            }
+                        }
+                    },
+                    isLoading = isLoadingSelectedJobs,
+                    errorMessage = selectedJobError,
+                    modifier = Modifier.padding(16.dp)
+                )
+
+                Divider(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    thickness = 1.dp
+                )
+            }
+
+            // Calculate if user has active work (WORK_IN_PROGRESS only)
+            val hasActiveWork = selectedJobs.any { it.status == ApplicationStatus.WORK_IN_PROGRESS }
+
+            // Rest of the content based on selected tab
+            when (selectedTab) {
+                0 -> EnhancedEmployeeHomeTab(
+                    modifier = Modifier.weight(1f),
+                    jobViewModel = jobViewModel,
+                    processedJobsViewModel = processedJobsViewModel,
+                    jobHistoryViewModel = jobHistoryViewModel,
+                    jobRepository = jobRepository,
+                    onJobDetails = onNavigateToJobDetails,
+                    onViewJobHistory = onNavigateToJobHistory,
+                    onNavigateToJobListing = onNavigateToJobListing,
+                    onNavigateToDashboard = onNavigateToDashboard,
+                    hasActiveWork = hasActiveWork,
+                    hasSelectedJobs = selectedJobs.isNotEmpty()
+                )
+                1 -> EmployeeJobsTab(
+                    modifier = Modifier.weight(1f),
+                    district = employeeProfile?.district ?: "",
+                    onJobSelected = onNavigateToJobDetails
+                )
+                2 -> EmployeeProfileTab(
+                    modifier = Modifier.weight(1f),
+                    profile = employeeProfile
+                )
+                3 -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                    LaunchedEffect(Unit) {
+                        onNavigateToJobHistory()
+                    }
                 }
             }
         }
     }
 }
+
+// Helper function to check job date conflicts (simplified implementation)
+private fun checkJobDateConflict(
+    selectedJobs: List<ApplicationWithJob>,
+    newJob: ApplicationWithJob
+): Boolean {
+    // This is a simplified version - implement proper date/time conflict checking
+    // based on your job scheduling requirements
+    val acceptedJobs = selectedJobs.filter {
+        it.status in listOf(ApplicationStatus.WORK_IN_PROGRESS)
+    }
+
+    // For now, return false (no conflicts) - implement your date comparison logic here
+    return false
+}
+@Composable
+fun SelectedJobsSection(
+    selectedJobs: List<ApplicationWithJob>,
+    currentIndex: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onAcceptJob: (Int) -> Unit,
+    onStartWork: (Int, String) -> Unit,
+    onCompleteWork: (Int) -> Unit,
+    isLoading: Boolean,
+    errorMessage: String?,
+    modifier: Modifier = Modifier
+) {
+    if (selectedJobs.isEmpty()) return
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            // Header with navigation
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Selected Jobs",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+
+                if (selectedJobs.size > 1) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = onPrevious,
+                            enabled = currentIndex > 0
+                        ) {
+                            Icon(
+                                Icons.Default.KeyboardArrowLeft,
+                                contentDescription = "Previous",
+                                tint = if (currentIndex > 0)
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                else
+                                    MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                            )
+                        }
+
+                        Text(
+                            text = "${currentIndex + 1}/${selectedJobs.size}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+
+                        IconButton(
+                            onClick = onNext,
+                            enabled = currentIndex < selectedJobs.size - 1
+                        ) {
+                            Icon(
+                                Icons.Default.KeyboardArrowRight,
+                                contentDescription = "Next",
+                                tint = if (currentIndex < selectedJobs.size - 1)
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                else
+                                    MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Current job card
+            if (currentIndex < selectedJobs.size) {
+                val currentJob = selectedJobs[currentIndex]
+
+                SelectedJobCard(
+                    job = currentJob,
+                    onAcceptJob = { onAcceptJob(currentIndex) },
+                    onStartWork = { otp -> onStartWork(currentIndex, otp) },
+                    onCompleteWork = { onCompleteWork(currentIndex) },
+                    isLoading = isLoading,
+                    errorMessage = errorMessage
+                )
+            }
+        }
+    }
+}
+
+// 🚀 UPDATED: Individual Selected Job Card Component with ACCEPTED status
+// 🚀 UPDATED EmployeeHomeScreen.kt - Only the completion workflow part
+
+@Composable
+fun SelectedJobCard(
+    job: ApplicationWithJob,
+    onAcceptJob: () -> Unit,
+    onStartWork: (String) -> Unit,
+    onCompleteWork: () -> Unit,
+    isLoading: Boolean,
+    errorMessage: String?,
+    modifier: Modifier = Modifier
+) {
+    var showOtpDialog by remember { mutableStateOf(false) }
+    var otpInput by remember { mutableStateOf("") }
+
+    // 🚀 NEW: Completion workflow state
+    var showCompletionDialog by remember { mutableStateOf(false) }
+    var completionOtp by remember { mutableStateOf("") }
+    var completionError by remember { mutableStateOf<String?>(null) }
+    var isCompletionLoading by remember { mutableStateOf(false) }
+
+    // Get application repository for completion workflow
+    val jobHistoryViewModel: JobHistoryViewModel = hiltViewModel()
+    val applicationRepository = jobHistoryViewModel.applicationRepository
+    val coroutineScope = rememberCoroutineScope()
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            // Job details (keep existing code)
+            Text(
+                text = job.job.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                text = job.job.location,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            job.job.salaryRange?.let { salary ->
+                Text(
+                    text = salary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Status-based UI
+            when (job.status) {
+                ApplicationStatus.SELECTED -> {
+                    // Keep existing SELECTED logic
+                    Column {
+                        Text(
+                            text = "Ready to Accept",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "You've been selected for this job",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = onAcceptJob,
+                            enabled = !isLoading,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondary
+                            )
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onSecondary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Accepting...")
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Accept Job")
+                            }
+                        }
+                    }
+                }
+
+                ApplicationStatus.ACCEPTED -> {
+                    // Keep existing ACCEPTED logic
+                    Column {
+                        Text(
+                            text = "Job Accepted",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Get the OTP from your employer to start work",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = { showOtpDialog = true },
+                            enabled = !isLoading,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Enter OTP to Start Work")
+                        }
+                    }
+                }
+
+                ApplicationStatus.WORK_IN_PROGRESS -> {
+                    // 🚀 UPDATED: New completion workflow
+                    Column {
+                        Text(
+                            text = "Work in Progress",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Complete your work when finished",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = {
+                                Log.d("SelectedJobCard", "🚀 Complete Work button clicked")
+                                // 🚀 NEW: Updated completion workflow
+                                coroutineScope.launch {
+                                    try {
+                                        isCompletionLoading = true
+                                        completionError = null
+
+                                        Log.d("SelectedJobCard", "🚀 Initiating completion for job: ${job.id}")
+
+                                        // 🚀 NEW: Use the new initiate completion method
+                                        val result = applicationRepository.initiateWorkCompletion(job.id)
+
+                                        if (result.isSuccess) {
+                                            Log.d("SelectedJobCard", "✅ Work completion initiated successfully")
+
+                                            // Get the completion OTP
+                                            val otpResult = applicationRepository.getCompletionOtp(job.id)
+                                            if (otpResult.isSuccess) {
+                                                completionOtp = otpResult.getOrNull() ?: ""
+                                                showCompletionDialog = true
+                                                Log.d("SelectedJobCard", "🔐 Completion OTP retrieved: $completionOtp")
+                                            } else {
+                                                completionError = "Failed to get completion OTP: ${otpResult.exceptionOrNull()?.message}"
+                                                Log.e("SelectedJobCard", "❌ Failed to get completion OTP")
+                                            }
+                                        } else {
+                                            val errorMessage = result.exceptionOrNull()?.message ?: "Failed to complete work"
+                                            completionError = errorMessage
+                                            Log.e("SelectedJobCard", "❌ Work completion failed: $errorMessage")
+                                        }
+                                    } catch (e: Exception) {
+                                        val errorMessage = e.message ?: "Unknown error occurred"
+                                        completionError = errorMessage
+                                        Log.e("SelectedJobCard", "❌ Exception during completion: $errorMessage", e)
+                                    } finally {
+                                        isCompletionLoading = false
+                                    }
+                                }
+                            },
+                            enabled = !isLoading && !isCompletionLoading,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.tertiary
+                            )
+                        ) {
+                            if (isCompletionLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onTertiary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Completing...")
+                            } else {
+                                Icon(Icons.Default.Check, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Complete Work")
+                            }
+                        }
+                    }
+                }
+
+                else -> {
+                    // Fallback for any other status
+                    Text(
+                        text = "Status: ${job.status}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Error message display
+            errorMessage?.let { error ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Error,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
+
+            // 🚀 NEW: Show completion error if any
+            completionError?.let { error ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Error,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // OTP Dialog for starting work (keep existing)
+    if (showOtpDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showOtpDialog = false
+                otpInput = ""
+            },
+            title = { Text("Enter Work OTP") },
+            text = {
+                Column {
+                    Text(
+                        text = "Please enter the 6-digit OTP provided by your employer to start work.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    OutlinedTextField(
+                        value = otpInput,
+                        onValueChange = {
+                            if (it.length <= 6 && it.all { char -> char.isDigit() }) {
+                                otpInput = it
+                            }
+                        },
+                        label = { Text("6-digit OTP") },
+                        placeholder = { Text("123456") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        isError = errorMessage?.contains("OTP", ignoreCase = true) == true
+                    )
+
+                    if (errorMessage?.contains("OTP", ignoreCase = true) == true ||
+                        errorMessage?.contains("expired", ignoreCase = true) == true) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = errorMessage,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (otpInput.length == 6) {
+                            Log.d("SelectedJobCard", "🚀 Submitting OTP: '$otpInput'")
+                            onStartWork(otpInput)
+                            showOtpDialog = false
+                            otpInput = ""
+                        }
+                    },
+                    enabled = otpInput.length == 6 && !isLoading
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text("Verify & Start")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showOtpDialog = false
+                        otpInput = ""
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // 🚀 NEW: Completion OTP Dialog
+    if (showCompletionDialog && completionOtp.isNotEmpty()) {
+        CompletionOtpDialog(
+            otp = completionOtp,
+            jobTitle = job.job.title,
+            workDuration = job.job.workDuration ?: "Duration calculated automatically",
+            estimatedWages = "Payment will be calculated by employer",
+            onDismiss = {
+                showCompletionDialog = false
+                completionOtp = ""
+                completionError = null
+            },
+            onConfirmCompletion = {
+                showCompletionDialog = false
+                completionOtp = ""
+                completionError = null
+                // Completion is already done, this is just acknowledgment
+                Log.d("SelectedJobCard", "✅ Employee confirmed work completion")
+            }
+        )
+    }
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -200,7 +940,9 @@ fun EnhancedEmployeeHomeTab(
     onJobDetails: (String) -> Unit,
     onViewJobHistory: () -> Unit,
     onNavigateToJobListing: (String) -> Unit,
-    onNavigateToDashboard: () -> Unit
+    onNavigateToDashboard: () -> Unit,
+    hasActiveWork: Boolean = false,
+    hasSelectedJobs: Boolean = false
 ) {
     val TAG = "EnhancedEmployeeHomeTab"
 
@@ -242,10 +984,7 @@ fun EnhancedEmployeeHomeTab(
                 Lifecycle.Event.ON_RESUME -> {
                     Log.d(TAG, "Screen resumed - checking for updates")
                     coroutineScope.launch {
-                        // Restore session state
                         processedJobsViewModel.restoreSessionState()
-
-                        // Check for new jobs
                         val district = employeeProfile?.district ?: ""
                         if (district.isNotBlank()) {
                             jobViewModel.checkForNewJobs(district).collect { count ->
@@ -334,7 +1073,6 @@ fun EnhancedEmployeeHomeTab(
                     }
                 },
                 actions = {
-                    // Job alerts icon
                     IconButton(
                         onClick = { showJobAlertDialog = true }
                     ) {
@@ -355,143 +1093,220 @@ fun EnhancedEmployeeHomeTab(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                when {
-                    isLoading && featuredJobs.isEmpty() -> {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
+            when {
+                isLoading && featuredJobs.isEmpty() -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
+                            CircularProgressIndicator()
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "Loading jobs...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                employeeProfile?.district == null -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LocationOff,
+                                contentDescription = null,
+                                modifier = Modifier.size(64.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "Location Not Set",
+                                style = MaterialTheme.typography.headlineSmall,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Please complete your profile to see jobs in your area",
+                                style = MaterialTheme.typography.bodyLarge,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Button(
+                                onClick = onNavigateToDashboard
                             ) {
-                                CircularProgressIndicator()
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = "Loading jobs...",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Icon(Icons.Default.Person, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Complete Profile")
                             }
                         }
                     }
+                }
 
-                    employeeProfile?.district == null -> {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                                modifier = Modifier.padding(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.LocationOff,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(64.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = "Location Not Set",
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Please complete your profile to see jobs in your area",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    textAlign = TextAlign.Center,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(24.dp))
-                                Button(
-                                    onClick = onNavigateToDashboard
+                else -> {
+                    // 🚀 FIXED: Use LazyColumn for proper scrolling with swipeable cards
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Top spacing
+                        item {
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+
+                        // Show active work message if user has active work
+                        if (hasActiveWork && !isShowingRejectedJobs) {
+                            item {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                                    )
                                 ) {
-                                    Icon(Icons.Default.Person, contentDescription = null)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Complete Profile")
-                                }
-                            }
-                        }
-                    }
-
-                    else -> {
-                        // Job History Button
-                        Button(
-                            onClick = onViewJobHistory,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.History,
-                                    contentDescription = "History",
-                                    modifier = Modifier.padding(end = 8.dp)
-                                )
-                                Text("View Your Job History")
-                                if (appliedJobIds.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Badge {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
                                         Text(
-                                            text = appliedJobIds.size.toString(),
-                                            style = MaterialTheme.typography.labelSmall
+                                            text = "You have work in progress. Complete it before applying for new jobs.",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
                                         )
                                     }
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        // Job History Button
+                        item {
+                            Button(
+                                onClick = onViewJobHistory,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.History,
+                                        contentDescription = "History",
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    )
+                                    Text("View Your Job History")
+                                    if (appliedJobIds.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Badge {
+                                            Text(
+                                                text = appliedJobIds.size.toString(),
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         // Swipe instruction text
-                        Text(
-                            text = "Swipe right to apply, left to reject",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        item {
+                            Text(
+                                text = when {
+                                    hasActiveWork -> "Complete your active work to apply for new jobs"
+                                    hasSelectedJobs -> "Accept selected jobs above, then swipe to find more opportunities"
+                                    else -> "Swipe right to apply, left to reject"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                                color = if (hasActiveWork)
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                else
+                                    MaterialTheme.colorScheme.onSurface
+                            )
+                        }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        // 🚀 FIXED: Swipeable Job Cards in LazyColumn item with proper height
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(500.dp) // Fixed height for swipeable cards
+                            ) {
+                                SwipeableJobCards(
+                                    jobs = featuredJobs,
+                                    jobsWithEmployers = jobsWithEmployers,
+                                    onJobAccepted = { job ->
+                                        if (!hasActiveWork) {
+                                            coroutineScope.launch {
+                                                jobViewModel.applyForJob(job.id)
+                                                snackbarHostState.showSnackbar(
+                                                    message = "Applied for: ${job.title}"
+                                                )
+                                            }
+                                        } else {
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    message = "Complete your active work first",
+                                                    duration = SnackbarDuration.Long
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onJobRejected = { job ->
+                                        if (!hasActiveWork) {
+                                            coroutineScope.launch {
+                                                jobViewModel.markJobAsNotInterested(job.id)
+                                                snackbarHostState.showSnackbar(
+                                                    message = "Job rejected: ${job.title}"
+                                                )
+                                            }
+                                        } else {
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    message = "Complete your active work first",
+                                                    duration = SnackbarDuration.Long
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onJobDetails = onJobDetails,
+                                    modifier = Modifier.fillMaxSize(),
+                                    isSwipeEnabled = !hasActiveWork
+                                )
+                            }
+                        }
 
-                        // Use the existing SwipeableJobCards component
-                        SwipeableJobCards(
-                            jobs = featuredJobs,
-                            jobsWithEmployers = jobsWithEmployers,
-                            onJobAccepted = { job ->
-                                coroutineScope.launch {
-                                    jobViewModel.applyForJob(job.id)
-                                    snackbarHostState.showSnackbar(
-                                        message = "Applied for: ${job.title}"
-                                    )
-                                }
-                            },
-                            onJobRejected = { job ->
-                                coroutineScope.launch {
-                                    jobViewModel.markJobAsNotInterested(job.id)
-                                    snackbarHostState.showSnackbar(
-                                        message = "Job rejected: ${job.title}"
-                                    )
-                                }
-                            },
-                            onJobDetails = onJobDetails,
-                            modifier = Modifier.weight(1f)
-                        )
+                        // Bottom spacing for FAB
+                        item {
+                            Spacer(modifier = Modifier.height(80.dp))
+                        }
                     }
                 }
             }
 
-            // Floating action button
-            if (!isShowingRejectedJobs && featuredJobs.isNotEmpty()) {
+            // Floating action button - only show if not working and not in rejected jobs mode
+            if (!isShowingRejectedJobs && featuredJobs.isNotEmpty() && !hasActiveWork) {
                 ExtendedFloatingActionButton(
                     onClick = {
                         employeeProfile?.district?.let { district ->
@@ -552,6 +1367,39 @@ fun EnhancedEmployeeHomeTab(
             }
         )
     }
+}
+
+@Composable
+fun OtpInputDialog(
+    show: Boolean,
+    otp: String,
+    onOtpChange: (String) -> Unit,
+    error: String?,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    if (!show) return
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Enter OTP from Employer") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = otp,
+                    onValueChange = onOtpChange,
+                    label = { Text("OTP") },
+                    singleLine = true,
+                    isError = error != null
+                )
+                if (error != null) {
+                    Text(error, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = { Button(onClick = onConfirm) { Text("Verify OTP") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 // Keep the existing EmployeeJobsTab and EmployeeProfileTab components unchanged

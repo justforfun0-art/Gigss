@@ -36,7 +36,7 @@ enum class SortOption {
 class JobViewModel @Inject constructor(
     val jobRepository: JobRepository,
     private val employerProfileRepository: EmployerProfileRepository,
-    private val applicationRepository: ApplicationRepository,
+    val applicationRepository: ApplicationRepository,
     private val profileRepository: ProfileRepository,
     private val authRepository: AuthRepository,
     private val processedJobsRepository: ProcessedJobsRepository,
@@ -650,8 +650,8 @@ class JobViewModel @Inject constructor(
             val actionStart = System.currentTimeMillis()
 
             try {
-                performanceMonitor.track("ultra_fast_reject_$jobId", "ui") {
-                    Log.d(TAG, "⚡ ULTRA-FAST: Starting instant rejection for job: $jobId")
+                performanceMonitor.track("ultra_fast_not_interested_$jobId", "ui") {
+                    Log.d(TAG, "⚡ ULTRA-FAST: Starting instant NOT_INTERESTED marking for job: $jobId")
 
                     // Immediate UI updates
                     val currentJobs = _featuredJobs.value.filter { job -> job.id != jobId }
@@ -660,8 +660,8 @@ class JobViewModel @Inject constructor(
                     val updatedSessionSet = _rejectedJobsProcessedInSession.value + jobId
                     _rejectedJobsProcessedInSession.value = updatedSessionSet
 
-                    // Immediate repository update
-                    processedJobsRepository.markJobAsRejectedUltraFast(jobId)
+                    // Immediate repository update - use NOT_INTERESTED terminology
+                    processedJobsRepository.markJobAsNotInterestedUltraFast(jobId)
 
                     val uiTime = System.currentTimeMillis() - actionStart
                     Log.d(TAG, "✅ INSTANT: UI updated for job $jobId in ${uiTime}ms")
@@ -673,7 +673,7 @@ class JobViewModel @Inject constructor(
                                 val success = jobRepository.markJobAsNotInterested(jobId)
 
                                 if (success) {
-                                    Log.d(TAG, "✅ BACKGROUND: Database synced for job $jobId")
+                                    Log.d(TAG, "✅ BACKGROUND: Database synced for job $jobId with NOT_INTERESTED status")
                                 } else {
                                     Log.w(TAG, "⚠️ BACKGROUND: Database sync failed for $jobId")
                                 }
@@ -684,15 +684,15 @@ class JobViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Ultra-fast rejection failed for $jobId: ${e.message}")
+                Log.e(TAG, "❌ Ultra-fast NOT_INTERESTED marking failed for $jobId: ${e.message}")
             } finally {
                 processingJobs.remove(jobId)
 
                 val totalTime = System.currentTimeMillis() - actionStart
                 if (totalTime > 16) {
-                    Log.w(TAG, "⚠️ PERFORMANCE: Rejection took ${totalTime}ms (target: <16ms)")
+                    Log.w(TAG, "⚠️ PERFORMANCE: NOT_INTERESTED marking took ${totalTime}ms (target: <16ms)")
                 } else {
-                    Log.d(TAG, "✅ PERFORMANCE: Rejection completed in ${totalTime}ms")
+                    Log.d(TAG, "✅ PERFORMANCE: NOT_INTERESTED marking completed in ${totalTime}ms")
                 }
             }
         }
@@ -721,7 +721,7 @@ class JobViewModel @Inject constructor(
                 jobRepository.supabaseClient
                     .table("applications")
                     .update(mapOf(
-                        "status" to "REJECTED",
+                        "status" to "NOT_INTERESTED",  // ← Changed from "REJECTED"
                         "updated_at" to timestamp
                     )) {
                         filter {
@@ -735,7 +735,7 @@ class JobViewModel @Inject constructor(
                     .insert(mapOf(
                         "job_id" to jobId,
                         "employee_id" to userId,
-                        "status" to "REJECTED",
+                        "status" to "NOT_INTERESTED",  // ← Changed from "REJECTED"
                         "applied_at" to timestamp,
                         "created_at" to timestamp,
                         "updated_at" to timestamp
@@ -751,12 +751,12 @@ class JobViewModel @Inject constructor(
     }
 
     // 🚀 REJECTED JOBS METHODS
-    fun getOnlyRejectedJobs(district: String) {
+    suspend fun getOnlyRejectedJobs(district: String) {
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { _isLoading.value = true }
 
             try {
-                Log.d(TAG, "🚀 GETTING ONLY REJECTED JOBS FOR DISTRICT: $district")
+                Log.d(TAG, "🚀 GETTING ONLY NOT_INTERESTED JOBS FOR DISTRICT: $district")
 
                 val userId = authRepository.getCurrentUserId() ?: run {
                     withContext(Dispatchers.Main) {
@@ -766,37 +766,58 @@ class JobViewModel @Inject constructor(
                     return@launch
                 }
 
-                val currentSessionProcessed = _rejectedJobsProcessedInSession.value
-
+                // 🚀 FIX 1: Query for "NOT_INTERESTED" status (user rejections)
                 val applications = withTimeoutOrNull(3000) {
+                    try {
+                        jobRepository.supabaseClient
+                            .table("applications")
+                            .select {
+                                filter {
+                                    eq("employee_id", userId)
+                                    // 🚀 CRITICAL: Use NOT_INTERESTED for user rejections
+                                    eq("status", "NOT_INTERESTED")
+                                }
+                                order("updated_at", Order.DESCENDING)
+                                limit(100)
+                            }
+                            .decodeList<Application>()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error fetching NOT_INTERESTED applications: ${e.message}")
+                        emptyList<Application>()
+                    }
+                } ?: emptyList()
+
+                Log.d(TAG, "Found ${applications.size} NOT_INTERESTED applications")
+
+                if (applications.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        _featuredJobs.value = emptyList()
+                        _isLoading.value = false
+                        Log.d(TAG, "❌ No NOT_INTERESTED applications found for user")
+                    }
+                    return@launch
+                }
+
+                // 🚀 FIX 2: Get all applications to properly filter out applied jobs
+                val allApplications = withTimeoutOrNull(2000) {
                     try {
                         jobRepository.supabaseClient
                             .table("applications")
                             .select {
                                 filter { eq("employee_id", userId) }
                                 order("updated_at", Order.DESCENDING)
-                                limit(100)
+                                limit(200)
                             }
                             .decodeList<Application>()
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error fetching applications: ${e.message}")
+                        Log.e(TAG, "Error fetching all applications: ${e.message}")
                         emptyList<Application>()
                     }
                 } ?: emptyList()
 
-                Log.d(TAG, "Found ${applications.size} total applications")
-
-                if (applications.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        _featuredJobs.value = emptyList()
-                        _isLoading.value = false
-                        Log.d(TAG, "❌ No applications found for user")
-                    }
-                    return@launch
-                }
-
-                val applicationsByJobId = applications.groupBy { it.jobId }
-                val rejectedJobIds = mutableListOf<String>()
+                // 🚀 FIX 3: Better logic for determining truly not-interested jobs
+                val applicationsByJobId = allApplications.groupBy { it.jobId }
+                val notInterestedJobIds = mutableListOf<String>()
                 val appliedJobIds = mutableSetOf<String>()
 
                 applicationsByJobId.forEach { (jobId, apps) ->
@@ -809,38 +830,46 @@ class JobViewModel @Inject constructor(
                         "APPLIED" -> {
                             appliedJobIds.add(jobId)
                         }
-                        "REJECTED" -> {
+                        "NOT_INTERESTED" -> {
+                            // 🚀 FIX: Only add to not interested if NOT already applied
                             if (!appliedJobIds.contains(jobId)) {
-                                rejectedJobIds.add(jobId)
+                                notInterestedJobIds.add(jobId)
                             }
+                        }
+                        // 🚀 EMPLOYER REJECTIONS: Keep separate from user rejections
+                        "REJECTED" -> {
+                            // This would be employer rejections - handle separately if needed
+                            Log.d(TAG, "Found employer rejection for job $jobId")
                         }
                     }
                 }
 
-                val availableRejectedJobIds = rejectedJobIds.filter { jobId ->
-                    !currentSessionProcessed.contains(jobId)
-                }
+                // 🚀 FIX 4: Don't filter by session processed jobs for rejected jobs mode
+                val availableNotInterestedJobIds = notInterestedJobIds.toList()
 
-                processedJobsRepository.updateRejectedJobIds(rejectedJobIds.toSet())
+                // 🚀 UPDATE: Use correct terminology in repository updates
+                processedJobsRepository.updateRejectedJobIds(notInterestedJobIds.toSet()) // This represents "not interested" jobs
                 processedJobsRepository.updateAppliedJobIds(appliedJobIds)
 
-                if (availableRejectedJobIds.isEmpty()) {
+                Log.d(TAG, "Available NOT_INTERESTED jobs: ${availableNotInterestedJobIds.size}")
+
+                if (availableNotInterestedJobIds.isEmpty()) {
                     withContext(Dispatchers.Main) {
                         _featuredJobs.value = emptyList()
-                        _currentRejectedJobsSession.value = emptyList()
                         _isLoading.value = false
                     }
                     return@launch
                 }
 
-                val rejectedJobs = withTimeoutOrNull(3000) {
+                // 🚀 FIX 5: Improved job fetching with better error handling
+                val notInterestedJobs = withTimeoutOrNull(3000) {
                     try {
-                        if (availableRejectedJobIds.size == 1) {
+                        if (availableNotInterestedJobIds.size == 1) {
                             val singleJob = jobRepository.supabaseClient
                                 .table("jobs")
                                 .select {
                                     filter {
-                                        eq("id", availableRejectedJobIds.first())
+                                        eq("id", availableNotInterestedJobIds.first())
                                         eq("is_active", true)
                                     }
                                 }
@@ -848,65 +877,68 @@ class JobViewModel @Inject constructor(
 
                             listOfNotNull(singleJob)
                         } else {
-                            val inClause = availableRejectedJobIds.joinToString(",")
+                            // 🚀 FIX: Better batch query with proper escaping
+                            val jobIdList = availableNotInterestedJobIds.take(20) // Limit to prevent issues
+                            val jobs = mutableListOf<Job>()
 
-                            jobRepository.supabaseClient
-                                .table("jobs")
-                                .select {
-                                    filter {
-                                        filter("id", FilterOperator.IN, "($inClause)")
-                                        eq("is_active", true)
-                                    }
-                                    order("created_at", Order.DESCENDING)
-                                }
-                                .decodeList<Job>()
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error fetching job details: ${e.message}")
-
-                        try {
-                            Log.d(TAG, "Batch query failed, trying individual queries...")
-                            val individualJobs = mutableListOf<Job>()
-
-                            availableRejectedJobIds.take(5).forEach { jobId ->
+                            // Fetch in smaller batches to avoid query limits
+                            jobIdList.chunked(5).forEach { chunk ->
                                 try {
-                                    val job = jobRepository.supabaseClient
+                                    val inClause = chunk.joinToString(",") { "\"$it\"" } // Proper escaping
+                                    val batchJobs = jobRepository.supabaseClient
                                         .table("jobs")
                                         .select {
                                             filter {
-                                                eq("id", jobId)
+                                                filter("id", FilterOperator.IN, "($inClause)")
                                                 eq("is_active", true)
                                             }
                                         }
-                                        .decodeSingleOrNull<Job>()
-
-                                    job?.let { individualJobs.add(it) }
-                                } catch (individualError: Exception) {
-                                    Log.e(TAG, "Failed to fetch individual job $jobId: ${individualError.message}")
+                                        .decodeList<Job>()
+                                    jobs.addAll(batchJobs)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error fetching batch: ${e.message}")
+                                    // Try individual queries for this chunk
+                                    chunk.forEach { jobId ->
+                                        try {
+                                            val job = jobRepository.supabaseClient
+                                                .table("jobs")
+                                                .select {
+                                                    filter {
+                                                        eq("id", jobId)
+                                                        eq("is_active", true)
+                                                    }
+                                                }
+                                                .decodeSingleOrNull<Job>()
+                                            job?.let { jobs.add(it) }
+                                        } catch (individualError: Exception) {
+                                            Log.e(TAG, "Failed to fetch individual job $jobId: ${individualError.message}")
+                                        }
+                                    }
                                 }
                             }
 
-                            individualJobs
-                        } catch (fallbackError: Exception) {
-                            Log.e(TAG, "Fallback individual queries also failed: ${fallbackError.message}")
-                            emptyList<Job>()
+                            jobs.sortedByDescending { it.createdAt ?: "" }
                         }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error fetching job details: ${e.message}")
+                        emptyList<Job>()
                     }
                 } ?: emptyList()
 
                 withContext(Dispatchers.Main) {
-                    _featuredJobs.value = rejectedJobs
-                    _currentRejectedJobsSession.value = rejectedJobs
+                    _featuredJobs.value = notInterestedJobs
                     _isLoading.value = false
-                    Log.d(TAG, "✅ SUCCESS: Set ${rejectedJobs.size} rejected jobs in UI")
+                    Log.d(TAG, "✅ SUCCESS: Set ${notInterestedJobs.size} NOT_INTERESTED jobs in UI")
+
+                    // 🚀 FIX 6: Clear session processed jobs when entering rejected mode
+                    _rejectedJobsProcessedInSession.value = emptySet()
                 }
 
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Exception getting rejected jobs: ${e.message}", e)
+                Log.e(TAG, "❌ Exception getting NOT_INTERESTED jobs: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     _isLoading.value = false
                     _featuredJobs.value = emptyList()
-                    _currentRejectedJobsSession.value = emptyList()
                 }
             }
         }
@@ -1417,6 +1449,21 @@ class JobViewModel @Inject constructor(
         Log.d(TAG, "==========================")
     }
 
+    fun debugNavigationState() {
+        viewModelScope.launch {
+            val featuredJobs = _featuredJobs.value
+            val isShowingRejected = processedJobsRepository.isShowingRejectedJobs.value
+
+            Log.d(TAG, "=== NAVIGATION DEBUG ===")
+            Log.d(TAG, "Mode: ${if (isShowingRejected) "REJECTED" else "REGULAR"}")
+            Log.d(TAG, "Featured jobs count: ${featuredJobs.size}")
+            Log.d(TAG, "Job IDs in order:")
+            featuredJobs.forEachIndexed { index, job ->
+                Log.d(TAG, "  [$index] ${job.id.take(8)}... - ${job.title}")
+            }
+            Log.d(TAG, "========================")
+        }
+    }
     override fun onCleared() {
         super.onCleared()
 
@@ -1436,5 +1483,136 @@ class JobViewModel @Inject constructor(
         memoryCallback = null
 
         Log.d(TAG, "JobViewModel cleanup completed")
+    }
+
+    /**
+     * 🚀 NEW: Get count of jobs eligible for reconsideration (referenced by SwipeableJobCards)
+     */
+    fun getEligibleReconsiderationCount(): Int {
+        return try {
+            processedJobsRepository.getEligibleForReconsideration().size
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting eligible reconsideration count: ${e.message}")
+            0
+        }
+    }
+
+    fun loadActiveJobsOnly() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                // Get all jobs first
+                val allJobs = jobRepository.getMyJobsDirect(100)
+
+                // Filter to show only active/approved jobs
+                val activeJobs = allJobs.filter { job ->
+                    job.isActive == true || job.status == JobStatus.APPROVED
+                }
+
+                _jobs.value = activeJobs
+                Log.d(TAG, "✅ Loaded ${activeJobs.size} active jobs (excluded rejected)")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading active jobs: ${e.message}")
+                _jobs.value = emptyList()
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    // 🚀 REPLACE the existing methods in your JobViewModel.kt with these:
+
+    /**
+     * Get all jobs posted by the current employer
+     */
+    fun getMyPostedJobs() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val userId = authRepository.getCurrentUserId()
+                if (userId != null) {
+                    Log.d(TAG, "🚀 Loading jobs posted by employer: $userId")
+
+                    jobRepository.getJobsByEmployer(userId).collect { result ->
+                        if (result.isSuccess) {
+                            val employerJobs = result.getOrNull() ?: emptyList()
+                            _jobs.value = employerJobs
+                            Log.d(TAG, "✅ Loaded ${employerJobs.size} jobs for employer")
+
+                            // Debug: Log job statuses
+                            employerJobs.forEach { job ->
+                                Log.d(TAG, "  - ${job.title}: ${job.status}")
+                            }
+                        } else {
+                            Log.e(TAG, "❌ Failed to load employer jobs: ${result.exceptionOrNull()?.message}")
+                            _jobs.value = emptyList()
+                        }
+                        _isLoading.value = false
+                    }
+                } else {
+                    Log.e(TAG, "❌ No authenticated user found")
+                    _jobs.value = emptyList()
+                    _isLoading.value = false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Exception loading employer jobs: ${e.message}")
+                _jobs.value = emptyList()
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /**
+     * Get only active/approved jobs posted by the current employer
+     */
+    fun getMyActiveJobs() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val userId = authRepository.getCurrentUserId()
+                if (userId != null) {
+                    Log.d(TAG, "🚀 Loading active jobs posted by employer: $userId")
+
+                    jobRepository.getActiveJobsByEmployer(userId).collect { result ->
+                        if (result.isSuccess) {
+                            val activeJobs = result.getOrNull() ?: emptyList()
+                            _jobs.value = activeJobs
+                            Log.d(TAG, "✅ Loaded ${activeJobs.size} active jobs for employer")
+                        } else {
+                            Log.e(TAG, "❌ Failed to load active jobs: ${result.exceptionOrNull()?.message}")
+                            _jobs.value = emptyList()
+                        }
+                        _isLoading.value = false
+                    }
+                } else {
+                    Log.e(TAG, "❌ No authenticated user found")
+                    _jobs.value = emptyList()
+                    _isLoading.value = false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Exception loading active jobs: ${e.message}")
+                _jobs.value = emptyList()
+                _isLoading.value = false
+            }
+        }
+    }
+
+
+    fun loadMyJobs() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val allJobs = jobRepository.getMyJobsDirect(100)
+                _jobs.value = allJobs
+                Log.d(TAG, "✅ Loaded ${allJobs.size} total jobs (including rejected)")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading all jobs: ${e.message}")
+                _jobs.value = emptyList()
+            } finally {
+                _isLoading.value = false
+            }
+        }
     }
 }

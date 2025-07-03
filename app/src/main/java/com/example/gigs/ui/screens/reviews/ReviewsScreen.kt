@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.gigs.data.model.Review
 import com.example.gigs.ui.components.GigWorkPrimaryButton
+import com.example.gigs.utils.DateUtils
 import com.example.gigs.utils.DateUtils.formatDate
 import com.example.gigs.viewmodel.ReviewState
 import com.example.gigs.viewmodel.ReviewViewModel
@@ -202,7 +203,7 @@ fun ReviewItem(
 
             if (review.createdAt != null) {
                 Text(
-                    text = formatDate(review.createdAt),
+                    text = DateUtils.formatDate(review.createdAt),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

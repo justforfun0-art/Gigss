@@ -189,9 +189,9 @@ fun DashboardApplicationItem(
                     "SHORTLISTED" -> MaterialTheme.colorScheme.tertiary
                     "HIRED" -> MaterialTheme.colorScheme.secondary
                     "REJECTED" -> MaterialTheme.colorScheme.error
+                    "NOT_INTERESTED" -> MaterialTheme.colorScheme.error
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
-
                 Text(
                     text = application.status?.toString()?.uppercase() ?: "UNKNOWN",
                     style = MaterialTheme.typography.bodySmall,
