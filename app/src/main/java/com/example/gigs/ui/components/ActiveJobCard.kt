@@ -1,4 +1,4 @@
-// Fixed ActiveJobCard.kt
+// Fixed ActiveJobCard.kt - Complete Work Completion Flow
 package com.example.gigs.ui.components
 
 import android.util.Log
@@ -21,13 +21,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.gigs.data.model.ApplicationStatus
 import com.example.gigs.data.model.ApplicationWithJob
 import com.example.gigs.data.model.getDisplayTextWithJob
+import com.example.gigs.viewmodel.JobHistoryViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.Instant
-
 
 @Composable
 fun ActiveJobCard(
@@ -44,6 +46,17 @@ fun ActiveJobCard(
     var showOtpDialog by remember { mutableStateOf(false) }
     var otpInput by remember { mutableStateOf("") }
     var workDuration by remember { mutableStateOf("00:00:00") }
+
+    // 🚀 FIXED: Completion dialog state
+    var showCompletionDialog by remember { mutableStateOf(false) }
+    var isCompletingWork by remember { mutableStateOf(false) }
+    var completionError by remember { mutableStateOf<String?>(null) }
+
+    // Get application repository for direct completion handling
+    val jobHistoryViewModel: JobHistoryViewModel = hiltViewModel()
+    val applicationRepository = jobHistoryViewModel.applicationRepository
+    val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Update work duration timer for WORK_IN_PROGRESS status
     LaunchedEffect(activeJob.status, activeJob.workSession?.workStartTime) {
@@ -82,6 +95,7 @@ fun ActiveJobCard(
                 ApplicationStatus.SELECTED -> MaterialTheme.colorScheme.secondaryContainer
                 ApplicationStatus.ACCEPTED -> MaterialTheme.colorScheme.primaryContainer
                 ApplicationStatus.WORK_IN_PROGRESS -> MaterialTheme.colorScheme.tertiaryContainer
+                ApplicationStatus.COMPLETION_PENDING -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
                 else -> MaterialTheme.colorScheme.surfaceVariant
             }
         ),
@@ -107,6 +121,7 @@ fun ActiveJobCard(
                             ApplicationStatus.SELECTED -> Icons.Default.CheckCircle
                             ApplicationStatus.ACCEPTED -> Icons.Default.Schedule
                             ApplicationStatus.WORK_IN_PROGRESS -> Icons.Default.Timer
+                            ApplicationStatus.COMPLETION_PENDING -> Icons.Default.HourglassTop
                             else -> Icons.Default.Work
                         },
                         contentDescription = null,
@@ -114,6 +129,7 @@ fun ActiveJobCard(
                             ApplicationStatus.SELECTED -> MaterialTheme.colorScheme.secondary
                             ApplicationStatus.ACCEPTED -> MaterialTheme.colorScheme.primary
                             ApplicationStatus.WORK_IN_PROGRESS -> MaterialTheme.colorScheme.tertiary
+                            ApplicationStatus.COMPLETION_PENDING -> MaterialTheme.colorScheme.primary
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
                     )
@@ -134,6 +150,7 @@ fun ActiveJobCard(
                                 ApplicationStatus.SELECTED -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f)
                                 ApplicationStatus.ACCEPTED -> MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                                 ApplicationStatus.WORK_IN_PROGRESS -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f)
+                                ApplicationStatus.COMPLETION_PENDING -> MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                                 else -> MaterialTheme.colorScheme.surfaceVariant
                             }
                         )
@@ -144,6 +161,7 @@ fun ActiveJobCard(
                             ApplicationStatus.SELECTED -> "Ready to Accept"
                             ApplicationStatus.ACCEPTED -> "Ready to Start"
                             ApplicationStatus.WORK_IN_PROGRESS -> "In Progress"
+                            ApplicationStatus.COMPLETION_PENDING -> "Completion Pending"
                             else -> activeJob.status.name
                         },
                         style = MaterialTheme.typography.labelMedium,
@@ -151,6 +169,7 @@ fun ActiveJobCard(
                             ApplicationStatus.SELECTED -> MaterialTheme.colorScheme.secondary
                             ApplicationStatus.ACCEPTED -> MaterialTheme.colorScheme.primary
                             ApplicationStatus.WORK_IN_PROGRESS -> MaterialTheme.colorScheme.tertiary
+                            ApplicationStatus.COMPLETION_PENDING -> MaterialTheme.colorScheme.primary
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
                     )
@@ -374,35 +393,115 @@ fun ActiveJobCard(
                     )
                 }
 
-                ApplicationStatus.WORK_IN_PROGRESS -> {
+                ApplicationStatus.WORK_IN_PROGRESS, ApplicationStatus.COMPLETION_PENDING -> {
+                    // 🚀 FIXED: Complete Work Button with proper loading state management
                     Button(
                         onClick = {
                             Log.d("ActiveJobCard", "🚀 Complete Work button clicked")
-                            onCompleteWork()
+                            showCompletionDialog = true
+                            completionError = null
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !isLoading,
+                        enabled = !isLoading && !isCompletingWork,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.tertiary
+                            containerColor = when (activeJob.status) {
+                                ApplicationStatus.WORK_IN_PROGRESS -> MaterialTheme.colorScheme.tertiary
+                                ApplicationStatus.COMPLETION_PENDING -> MaterialTheme.colorScheme.secondary
+                                else -> MaterialTheme.colorScheme.tertiary
+                            }
                         )
                     ) {
-                        if (isLoading) {
+                    if (isLoading || isCompletingWork) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
                                 color = MaterialTheme.colorScheme.onTertiary
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Completing...")
+                            Text("Processing...")
                         } else {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Complete Work")
+                        Icon(
+                            imageVector = when (activeJob.status) {
+                                ApplicationStatus.COMPLETION_PENDING -> Icons.Default.Refresh
+                                else -> Icons.Default.CheckCircle
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            when (activeJob.status) {
+                                ApplicationStatus.COMPLETION_PENDING -> "Refresh Completion Code"
+                                else -> "Complete Work"
+                            }
+                        )
                         }
                     }
+
+                    // Instructions
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = when (activeJob.status) {
+                            ApplicationStatus.COMPLETION_PENDING -> "Work completion already initiated. Tap to refresh completion code if needed."
+                            else -> "Click to complete your work and generate completion code for employer verification"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                ApplicationStatus.COMPLETION_PENDING -> {
+                    // Show completion pending status with OTP
+                    activeJob.workSession?.completionOtp?.let { otp ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "Completion Code",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = otp,
+                                    style = MaterialTheme.typography.headlineLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "Share this code with your employer to verify work completion",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+
+                    // Instructions
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Work completion initiated! Waiting for employer verification.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
 
                 else -> {
@@ -441,10 +540,38 @@ fun ActiveJobCard(
                     }
                 }
             }
+
+            // Show completion error if any
+            completionError?.let { error ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Error,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
         }
     }
 
-    // OTP Dialog - shown when Start Work is clicked for ACCEPTED status
+    // OTP Dialog for starting work (existing)
     if (showOtpDialog) {
         AlertDialog(
             onDismissRequest = {
@@ -523,4 +650,151 @@ fun ActiveJobCard(
             }
         )
     }
+
+    // 🚀 FIXED: Work Completion Confirmation Dialog with proper error handling
+    if (showCompletionDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isCompletingWork) {
+                    showCompletionDialog = false
+                    completionError = null
+                }
+            },
+            title = {
+                Text("Complete Work")
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Are you sure you have completed all work for this job?",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Text(
+                                text = "What happens next:",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "• A completion code will be generated\n• Share this code with your employer\n• Your employer will verify completion\n• Payment will be calculated automatically",
+                                style = MaterialTheme.typography.bodySmall,
+                                lineHeight = androidx.compose.ui.unit.TextUnit.Unspecified
+                            )
+                        }
+                    }
+
+                    // Show completion error if any
+                    completionError?.let { error ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        Log.d("ActiveJobCard", "🚀 Confirming work completion")
+                        isCompletingWork = true
+                        completionError = null
+
+                        // 🚀 FIXED: Use coroutine scope for completion handling
+                        coroutineScope.launch {
+                            try {
+                                val result = applicationRepository.initiateWorkCompletion(activeJob.id)
+
+                                if (result.isSuccess) {
+                                    val message = result.getOrNull() ?: "Work completion initiated!"
+                                    Log.d("ActiveJobCard", "✅ Work completion success: $message")
+
+                                    showCompletionDialog = false
+
+                                    // Extract completion OTP if available in the message
+                                    val otpMatch = "completion code (\\d{6})".toRegex().find(message)
+                                    val otp = otpMatch?.groupValues?.get(1)
+
+                                    // Show success snackbar with OTP if found
+                                    if (otp != null) {
+                                        snackbarHostState.showSnackbar(
+                                            "Work completion initiated! Completion code: $otp",
+                                            duration = SnackbarDuration.Long
+                                        )
+                                    } else {
+                                        snackbarHostState.showSnackbar(message)
+                                    }
+
+                                    // Call the callback to refresh UI
+                                    onCompleteWork()
+                                } else {
+                                    val errorMsg = result.exceptionOrNull()?.message ?: "Failed to complete work"
+                                    Log.e("ActiveJobCard", "❌ Work completion failed: $errorMsg")
+                                    completionError = errorMsg
+                                }
+                            } catch (e: Exception) {
+                                val errorMsg = "Error completing work: ${e.message}"
+                                Log.e("ActiveJobCard", "❌ Work completion exception: $errorMsg", e)
+                                completionError = errorMsg
+                            } finally {
+                                isCompletingWork = false
+                            }
+                        }
+                    },
+                    enabled = !isCompletingWork,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.tertiary
+                    )
+                ) {
+                    if (isCompletingWork) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onTertiary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Completing...")
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Yes, Complete Work")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        if (!isCompletingWork) {
+                            showCompletionDialog = false
+                            completionError = null
+                        }
+                    },
+                    enabled = !isCompletingWork
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Add SnackbarHost for showing completion messages
+    SnackbarHost(hostState = snackbarHostState)
 }

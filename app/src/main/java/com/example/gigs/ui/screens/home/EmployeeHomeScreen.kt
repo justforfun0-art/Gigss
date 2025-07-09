@@ -1,3 +1,4 @@
+// Fixed EmployeeHomeScreen.kt - Complete Work Completion Flow
 package com.example.gigs.ui.screens.home
 
 import android.util.Log
@@ -20,6 +21,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -39,8 +41,9 @@ import com.example.gigs.ui.screens.dashboard.JobItem
 import com.example.gigs.viewmodel.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-// Fixed EmployeeHomeScreen.kt - Main function with proper Accept Job handling
+// Fixed Employee Home Screen Integration - EmployeeHomeScreen.kt updates
 
+// 🚀 ENHANCED: Complete Work implementation in EmployeeHomeScreen.kt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmployeeHomeScreen(
@@ -76,44 +79,15 @@ fun EmployeeHomeScreen(
 
     // Load selected jobs instead of single active job
     LaunchedEffect(Unit) {
-        profileViewModel.getEmployeeProfile()
-
-        // Load selected jobs immediately
         try {
+            profileViewModel.getEmployeeProfile()
             isLoadingSelectedJobs = true
-            Log.d("EmployeeHomeScreen", "🚀 Initial loading - refreshing application history")
-
-            jobHistoryViewModel.refreshApplicationHistory()
-            delay(1000) // Give more time for data to load
-
-            val selectedJobsList = jobHistoryViewModel.getSelectedJobs()
-            selectedJobs = selectedJobsList
-
-            Log.d("EmployeeHomeScreen", "🚀 Found ${selectedJobsList.size} selected jobs")
-
+            selectedJobs = jobHistoryViewModel.getSelectedJobs()
+            Log.d("EmployeeHomeScreen", "🚀 Selected jobs refreshed: ${selectedJobs.size} jobs")
         } catch (e: Exception) {
-            selectedJobError = "Failed to load selected jobs: ${e.message}"
-            Log.e("EmployeeHomeScreen", "❌ Error loading selected jobs: ${e.message}")
+            Log.e("EmployeeHomeScreen", "❌ Error refreshing selected jobs on tab switch: ${e.message}")
         } finally {
             isLoadingSelectedJobs = false
-        }
-    }
-
-    // Refresh selected jobs when switching to home tab
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == 0) { // Home tab
-            Log.d("EmployeeHomeScreen", "🚀 Home tab selected, checking for selected job updates")
-            try {
-                jobHistoryViewModel.refreshApplicationHistory()
-                delay(500)
-                val refreshedSelectedJobs = jobHistoryViewModel.getSelectedJobs()
-                if (refreshedSelectedJobs != selectedJobs) {
-                    selectedJobs = refreshedSelectedJobs
-                    Log.d("EmployeeHomeScreen", "🚀 Selected jobs refreshed: ${refreshedSelectedJobs.size} jobs")
-                }
-            } catch (e: Exception) {
-                Log.e("EmployeeHomeScreen", "❌ Error refreshing selected jobs on tab switch: ${e.message}")
-            }
         }
     }
 
@@ -123,20 +97,13 @@ fun EmployeeHomeScreen(
                 title = { Text("GigWork") },
                 actions = {
                     IconButton(onClick = onNavigateToJobHistory) {
-                        Icon(
-                            imageVector = Icons.Default.History,
-                            contentDescription = "Job History"
-                        )
+                        Icon(Icons.Default.History, contentDescription = "Job History")
                     }
-
                     IconButton(onClick = {
                         authViewModel.signOut()
                         onSignOut()
                     }) {
-                        Icon(
-                            imageVector = Icons.Default.ExitToApp,
-                            contentDescription = "Sign Out"
-                        )
+                        Icon(Icons.Default.ExitToApp, contentDescription = "Sign Out")
                     }
                 }
             )
@@ -147,15 +114,9 @@ fun EmployeeHomeScreen(
                 NavigationBarItem(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Home,
-                            contentDescription = "Home"
-                        )
-                    },
+                    icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                     label = { Text("Home") }
                 )
-
                 NavigationBarItem(
                     selected = selectedTab == 1,
                     onClick = {
@@ -164,42 +125,25 @@ fun EmployeeHomeScreen(
                             onNavigateToJobListing(district)
                         }
                     },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Find Jobs"
-                        )
-                    },
+                    icon = { Icon(Icons.Default.Search, contentDescription = "Find Jobs") },
                     label = { Text("Find Jobs") }
                 )
-
                 NavigationBarItem(
                     selected = selectedTab == 2,
                     onClick = {
                         selectedTab = 2
                         onNavigateToDashboard()
                     },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = "Profile"
-                        )
-                    },
+                    icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
                     label = { Text("Profile") }
                 )
-
                 NavigationBarItem(
                     selected = selectedTab == 3,
                     onClick = {
                         selectedTab = 3
                         onNavigateToJobHistory()
                     },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.History,
-                            contentDescription = "Job History"
-                        )
-                    },
+                    icon = { Icon(Icons.Default.History, contentDescription = "Job History") },
                     label = { Text("History") }
                 )
             }
@@ -225,7 +169,6 @@ fun EmployeeHomeScreen(
                             currentSelectedJobIndex++
                         }
                     },
-                    // 🚀 FIXED: Accept Job implementation using SELECTED status
                     onAcceptJob = { jobIndex ->
                         val selectedJob = selectedJobs[jobIndex]
                         coroutineScope.launch {
@@ -245,19 +188,16 @@ fun EmployeeHomeScreen(
                                     return@launch
                                 }
 
-                                // 🚀 FIXED: Accept the job (update status to ACCEPTED, not HIRED)
+                                // Accept the job (update status to ACCEPTED)
                                 applicationRepository.updateEmployeeApplicationStatus(
                                     selectedJob.jobId,
-                                    "ACCEPTED"  // Changed from HIRED to ACCEPTED
+                                    "ACCEPTED"
                                 ).collect { updateResult ->
                                     if (updateResult.isSuccess) {
                                         snackbarHostState.showSnackbar("Job accepted successfully!")
-
-                                        // Refresh selected jobs
                                         jobHistoryViewModel.refreshApplicationHistory()
                                         delay(500)
                                         selectedJobs = jobHistoryViewModel.getSelectedJobs()
-
                                         Log.d("EmployeeHomeScreen", "✅ Job accepted and status updated to ACCEPTED")
                                     } else {
                                         val errorMsg = updateResult.exceptionOrNull()?.message ?: "Failed to accept job"
@@ -297,20 +237,14 @@ fun EmployeeHomeScreen(
 
                                 if (result.isSuccess) {
                                     snackbarHostState.showSnackbar("Work started successfully!")
-
-                                    // Wait and refresh to get updated status
                                     delay(1000)
                                     jobHistoryViewModel.refreshApplicationHistory()
                                     delay(500)
-
                                     selectedJobs = jobHistoryViewModel.getSelectedJobs()
-
                                     Log.d("EmployeeHomeScreen", "🚀 Selected jobs updated after work start")
-
                                 } else {
                                     val errorMessage = result.exceptionOrNull()?.message ?: "Invalid OTP or verification failed"
                                     Log.e("EmployeeHomeScreen", "❌ OTP verification failed: $errorMessage")
-
                                     selectedJobError = errorMessage
                                     snackbarHostState.showSnackbar(
                                         message = errorMessage,
@@ -320,7 +254,6 @@ fun EmployeeHomeScreen(
                             } catch (e: Exception) {
                                 val errorMessage = e.message ?: "Failed to start work"
                                 Log.e("EmployeeHomeScreen", "❌ Exception during OTP verification: $errorMessage", e)
-
                                 selectedJobError = errorMessage
                                 snackbarHostState.showSnackbar(
                                     message = "Error: $errorMessage",
@@ -331,6 +264,7 @@ fun EmployeeHomeScreen(
                             }
                         }
                     },
+                    // 🚀 ENHANCED: Complete Work implementation with proper completion flow
                     onCompleteWork = { jobIndex ->
                         val selectedJob = selectedJobs[jobIndex]
                         coroutineScope.launch {
@@ -338,18 +272,34 @@ fun EmployeeHomeScreen(
                             selectedJobError = null
 
                             try {
-                                Log.d("EmployeeHomeScreen", "🚀 Completing work for job: ${selectedJob.id}")
+                                Log.d("EmployeeHomeScreen", "🚀 Starting work completion for job: ${selectedJob.id}")
 
-                                val result = applicationRepository.completeWork(selectedJob.id)
+                                // 🚀 USE: Enhanced initiate completion method
+                                val result = applicationRepository.initiateWorkCompletion(selectedJob.id)
 
                                 if (result.isSuccess) {
-                                    snackbarHostState.showSnackbar("Work completed successfully!")
+                                    val message = result.getOrNull() ?: "Work completion initiated successfully!"
 
-                                    // Refresh and update selected jobs
+                                    // Extract completion OTP from message for display
+                                    val otpMatch = "Completion code: (\\d{6})".toRegex().find(message)
+                                    val completionOtp = otpMatch?.groupValues?.get(1)
+
+                                    if (completionOtp != null) {
+                                        snackbarHostState.showSnackbar(
+                                            "Work completion initiated! Completion code: $completionOtp. Share this with your employer.",
+                                            duration = SnackbarDuration.Long
+                                        )
+                                    } else {
+                                        snackbarHostState.showSnackbar(message)
+                                    }
+
+                                    // Refresh and update selected jobs to show new status
+                                    delay(500)
                                     jobHistoryViewModel.refreshApplicationHistory()
+                                    delay(500)
                                     selectedJobs = jobHistoryViewModel.getSelectedJobs()
 
-                                    Log.d("EmployeeHomeScreen", "🚀 Work completed, selected jobs updated")
+                                    Log.d("EmployeeHomeScreen", "✅ Work completion initiated successfully")
 
                                 } else {
                                     val errorMessage = result.exceptionOrNull()?.message ?: "Failed to complete work"
@@ -357,7 +307,7 @@ fun EmployeeHomeScreen(
 
                                     selectedJobError = errorMessage
                                     snackbarHostState.showSnackbar(
-                                        message = errorMessage,
+                                        message = "Failed to complete work: $errorMessage",
                                         duration = SnackbarDuration.Long
                                     )
                                 }
@@ -367,7 +317,7 @@ fun EmployeeHomeScreen(
 
                                 selectedJobError = errorMessage
                                 snackbarHostState.showSnackbar(
-                                    message = "Error: $errorMessage",
+                                    message = "Error completing work: $errorMessage",
                                     duration = SnackbarDuration.Long
                                 )
                             } finally {
@@ -445,6 +395,7 @@ private fun checkJobDateConflict(
     // For now, return false (no conflicts) - implement your date comparison logic here
     return false
 }
+
 @Composable
 fun SelectedJobsSection(
     selectedJobs: List<ApplicationWithJob>,
@@ -542,8 +493,9 @@ fun SelectedJobsSection(
     }
 }
 
-// 🚀 UPDATED: Individual Selected Job Card Component with ACCEPTED status
-// 🚀 UPDATED EmployeeHomeScreen.kt - Only the completion workflow part
+// 🚀 FIXED: Selected Job Card Component with proper completion workflow
+// EmployeeHomeScreen.kt - UPDATED with complete work completion flow
+// Fixed Employee Work Completion Flow - SelectedJobCard.kt
 
 @Composable
 fun SelectedJobCard(
@@ -558,7 +510,7 @@ fun SelectedJobCard(
     var showOtpDialog by remember { mutableStateOf(false) }
     var otpInput by remember { mutableStateOf("") }
 
-    // 🚀 NEW: Completion workflow state
+    // 🚀 ENHANCED: Completion workflow state
     var showCompletionDialog by remember { mutableStateOf(false) }
     var completionOtp by remember { mutableStateOf("") }
     var completionError by remember { mutableStateOf<String?>(null) }
@@ -568,17 +520,27 @@ fun SelectedJobCard(
     val jobHistoryViewModel: JobHistoryViewModel = hiltViewModel()
     val applicationRepository = jobHistoryViewModel.applicationRepository
     val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
+            containerColor = when (job.status) {
+                ApplicationStatus.SELECTED -> MaterialTheme.colorScheme.secondaryContainer
+                ApplicationStatus.ACCEPTED -> MaterialTheme.colorScheme.primaryContainer
+                ApplicationStatus.WORK_IN_PROGRESS -> MaterialTheme.colorScheme.tertiaryContainer
+                ApplicationStatus.COMPLETION_PENDING -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
         ) {
-            // Job details (keep existing code)
+            // Job details
             Text(
                 text = job.job.title,
                 style = MaterialTheme.typography.titleMedium,
@@ -605,53 +567,50 @@ fun SelectedJobCard(
             // Status-based UI
             when (job.status) {
                 ApplicationStatus.SELECTED -> {
-                    // Keep existing SELECTED logic
                     Column {
                         Text(
-                            text = "Ready to Accept",
+                            text = "Selected for Job",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = MaterialTheme.colorScheme.secondary,
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "You've been selected for this job",
+                            text = "Accept or decline this job offer",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        Button(
-                            onClick = onAcceptJob,
-                            enabled = !isLoading,
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.secondary
-                            )
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            if (isLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onSecondary
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Accepting...")
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Accept Job")
+                            OutlinedButton(
+                                onClick = { /* Decline logic */ },
+                                modifier = Modifier.weight(1f),
+                                enabled = !isLoading
+                            ) {
+                                Text("Decline")
+                            }
+
+                            Button(
+                                onClick = onAcceptJob,
+                                modifier = Modifier.weight(1f),
+                                enabled = !isLoading,
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                            ) {
+                                if (isLoading) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSecondary)
+                                } else {
+                                    Text("Accept Job")
+                                }
                             }
                         }
                     }
                 }
 
                 ApplicationStatus.ACCEPTED -> {
-                    // Keep existing ACCEPTED logic
                     Column {
                         Text(
                             text = "Job Accepted",
@@ -660,7 +619,7 @@ fun SelectedJobCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "Get the OTP from your employer to start work",
+                            text = "Get OTP from employer to start work",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -668,19 +627,29 @@ fun SelectedJobCard(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Button(
-                            onClick = { showOtpDialog = true },
+                            onClick = {
+                                showOtpDialog = true
+                                otpInput = ""
+                            },
+                            modifier = Modifier.fillMaxWidth(),
                             enabled = !isLoading,
-                            modifier = Modifier.fillMaxWidth()
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                         ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Enter OTP to Start Work")
+                            if (isLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Starting...")
+                            } else {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Start Work")
+                            }
                         }
                     }
                 }
 
                 ApplicationStatus.WORK_IN_PROGRESS -> {
-                    // 🚀 UPDATED: New completion workflow
+                    // 🚀 ENHANCED: Work in progress with complete work button
                     Column {
                         Text(
                             text = "Work in Progress",
@@ -699,62 +668,167 @@ fun SelectedJobCard(
                         Button(
                             onClick = {
                                 Log.d("SelectedJobCard", "🚀 Complete Work button clicked")
-                                // 🚀 NEW: Updated completion workflow
-                                coroutineScope.launch {
-                                    try {
-                                        isCompletionLoading = true
-                                        completionError = null
-
-                                        Log.d("SelectedJobCard", "🚀 Initiating completion for job: ${job.id}")
-
-                                        // 🚀 NEW: Use the new initiate completion method
-                                        val result = applicationRepository.initiateWorkCompletion(job.id)
-
-                                        if (result.isSuccess) {
-                                            Log.d("SelectedJobCard", "✅ Work completion initiated successfully")
-
-                                            // Get the completion OTP
-                                            val otpResult = applicationRepository.getCompletionOtp(job.id)
-                                            if (otpResult.isSuccess) {
-                                                completionOtp = otpResult.getOrNull() ?: ""
-                                                showCompletionDialog = true
-                                                Log.d("SelectedJobCard", "🔐 Completion OTP retrieved: $completionOtp")
-                                            } else {
-                                                completionError = "Failed to get completion OTP: ${otpResult.exceptionOrNull()?.message}"
-                                                Log.e("SelectedJobCard", "❌ Failed to get completion OTP")
-                                            }
-                                        } else {
-                                            val errorMessage = result.exceptionOrNull()?.message ?: "Failed to complete work"
-                                            completionError = errorMessage
-                                            Log.e("SelectedJobCard", "❌ Work completion failed: $errorMessage")
-                                        }
-                                    } catch (e: Exception) {
-                                        val errorMessage = e.message ?: "Unknown error occurred"
-                                        completionError = errorMessage
-                                        Log.e("SelectedJobCard", "❌ Exception during completion: $errorMessage", e)
-                                    } finally {
-                                        isCompletionLoading = false
-                                    }
-                                }
+                                showCompletionDialog = true
                             },
                             enabled = !isLoading && !isCompletionLoading,
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.tertiary
-                            )
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
                         ) {
                             if (isCompletionLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onTertiary
-                                )
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onTertiary)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Completing...")
                             } else {
                                 Icon(Icons.Default.Check, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Complete Work")
+                            }
+                        }
+                    }
+                }
+
+                ApplicationStatus.COMPLETION_PENDING -> {
+                    // 🚀 NEW: Show completion pending status with completion OTP
+                    Column {
+                        Text(
+                            text = "Completion Pending",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.secondary,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Waiting for employer to verify your work completion",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Show completion OTP if available
+                        job.workSession?.completionOtp?.let { otp ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = "Completion Code",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = otp,
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                        letterSpacing = 4.sp
+                                    )
+                                    Text(
+                                        text = "Share this code with your employer",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        } ?: run {
+                            // If no OTP, show refresh button
+                            Button(
+                                onClick = {
+                                    isCompletionLoading = true
+                                    coroutineScope.launch {
+                                        try {
+                                            val result = applicationRepository.initiateWorkCompletion(job.id)
+                                            if (result.isSuccess) {
+                                                val message = result.getOrNull() ?: ""
+                                                val otpMatch = "completion code (\\d{6})".toRegex().find(message)
+                                                if (otpMatch != null) {
+                                                    completionOtp = otpMatch.groupValues[1]
+                                                }
+                                                snackbarHostState.showSnackbar("Completion code refreshed!")
+                                                onCompleteWork() // Refresh the UI
+                                            } else {
+                                                completionError = result.exceptionOrNull()?.message ?: "Failed to refresh completion code"
+                                            }
+                                        } catch (e: Exception) {
+                                            completionError = "Error: ${e.message}"
+                                        } finally {
+                                            isCompletionLoading = false
+                                        }
+                                    }
+                                },
+                                enabled = !isCompletionLoading,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                            ) {
+                                if (isCompletionLoading) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSecondary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Refreshing...")
+                                } else {
+                                    Icon(Icons.Default.Refresh, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Refresh Completion Code")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ApplicationStatus.COMPLETED -> {
+                    // 🚀 NEW: Show completed status with wages
+                    Column {
+                        Text(
+                            text = "Work Completed",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Congratulations! Your work has been completed and verified",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        // Show wage information if available
+                        job.workSession?.let { session ->
+                            if (session.totalWagesCalculated != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = "Wages Earned",
+                                                style = MaterialTheme.typography.labelMedium
+                                            )
+                                            Text(
+                                                text = "₹${session.totalWagesCalculated}",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        Text(
+                                            text = session.formattedWorkDuration,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -774,20 +848,13 @@ fun SelectedJobCard(
             errorMessage?.let { error ->
                 Spacer(modifier = Modifier.height(8.dp))
                 Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    )
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                 ) {
                     Row(
                         modifier = Modifier.padding(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Error,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        Icon(Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = error,
@@ -798,24 +865,17 @@ fun SelectedJobCard(
                 }
             }
 
-            // 🚀 NEW: Show completion error if any
+            // Show completion error if any
             completionError?.let { error ->
                 Spacer(modifier = Modifier.height(8.dp))
                 Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    )
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                 ) {
                     Row(
                         modifier = Modifier.padding(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Error,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        Icon(Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = error,
@@ -828,7 +888,7 @@ fun SelectedJobCard(
         }
     }
 
-    // OTP Dialog for starting work (keep existing)
+    // OTP Dialog for starting work
     if (showOtpDialog) {
         AlertDialog(
             onDismissRequest = {
@@ -862,6 +922,7 @@ fun SelectedJobCard(
                         isError = errorMessage?.contains("OTP", ignoreCase = true) == true
                     )
 
+                    // Show OTP-specific error in dialog
                     if (errorMessage?.contains("OTP", ignoreCase = true) == true ||
                         errorMessage?.contains("expired", ignoreCase = true) == true) {
                         Spacer(modifier = Modifier.height(8.dp))
@@ -905,30 +966,145 @@ fun SelectedJobCard(
         )
     }
 
-    // 🚀 NEW: Completion OTP Dialog
-    if (showCompletionDialog && completionOtp.isNotEmpty()) {
-        CompletionOtpDialog(
-            otp = completionOtp,
-            jobTitle = job.job.title,
-            workDuration = job.job.workDuration ?: "Duration calculated automatically",
-            estimatedWages = "Payment will be calculated by employer",
-            onDismiss = {
-                showCompletionDialog = false
-                completionOtp = ""
-                completionError = null
+    // 🚀 NEW: Work Completion Confirmation Dialog
+    if (showCompletionDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isCompletionLoading) {
+                    showCompletionDialog = false
+                    completionError = null
+                }
             },
-            onConfirmCompletion = {
-                showCompletionDialog = false
-                completionOtp = ""
-                completionError = null
-                // Completion is already done, this is just acknowledgment
-                Log.d("SelectedJobCard", "✅ Employee confirmed work completion")
+            title = { Text("Complete Work") },
+            text = {
+                Column {
+                    Text(
+                        text = "Are you sure you have completed all work for this job?",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Text(
+                                text = "What happens next:",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "• A completion code will be generated\n• Share this code with your employer\n• Your employer will verify and finalize\n• Payment will be calculated automatically",
+                                style = MaterialTheme.typography.bodySmall,
+                                lineHeight = androidx.compose.ui.unit.TextUnit.Unspecified
+                            )
+                        }
+                    }
+
+                    // Show completion error if any
+                    completionError?.let { error ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        Log.d("SelectedJobCard", "🚀 Confirming work completion")
+                        isCompletionLoading = true
+                        completionError = null
+
+                        // 🚀 ENHANCED: Complete work completion flow
+                        coroutineScope.launch {
+                            try {
+                                val result = applicationRepository.initiateWorkCompletion(job.id)
+
+                                if (result.isSuccess) {
+                                    val message = result.getOrNull() ?: "Work completion initiated!"
+                                    Log.d("SelectedJobCard", "✅ Work completion success: $message")
+
+                                    // Extract completion OTP if available in the message
+                                    val otpMatch = "completion code (\\d{6})".toRegex().find(message)
+                                    if (otpMatch != null) {
+                                        completionOtp = otpMatch.groupValues[1]
+
+                                        // Show completion OTP dialog
+                                        showCompletionDialog = false
+
+                                        // Show success with OTP
+                                        snackbarHostState.showSnackbar(
+                                            "Work completion initiated! Completion code: $completionOtp. Share this with your employer.",
+                                            duration = SnackbarDuration.Long
+                                        )
+                                    } else {
+                                        showCompletionDialog = false
+                                        snackbarHostState.showSnackbar(message)
+                                    }
+
+                                    // Call the callback to refresh UI
+                                    onCompleteWork()
+                                } else {
+                                    val errorMsg = result.exceptionOrNull()?.message ?: "Failed to complete work"
+                                    Log.e("SelectedJobCard", "❌ Work completion failed: $errorMsg")
+                                    completionError = errorMsg
+                                }
+                            } catch (e: Exception) {
+                                val errorMsg = "Error completing work: ${e.message}"
+                                Log.e("SelectedJobCard", "❌ Work completion exception: $errorMsg", e)
+                                completionError = errorMsg
+                            } finally {
+                                isCompletionLoading = false
+                            }
+                        }
+                    },
+                    enabled = !isCompletionLoading,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                ) {
+                    if (isCompletionLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onTertiary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Completing...")
+                    } else {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Yes, Complete Work")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        if (!isCompletionLoading) {
+                            showCompletionDialog = false
+                            completionError = null
+                        }
+                    },
+                    enabled = !isCompletionLoading
+                ) {
+                    Text("Cancel")
+                }
             }
         )
     }
+
+    // Add SnackbarHost for showing completion messages
+    SnackbarHost(hostState = snackbarHostState)
 }
 
-
+// Rest of the existing components remain the same
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EnhancedEmployeeHomeTab(
@@ -1369,40 +1545,7 @@ fun EnhancedEmployeeHomeTab(
     }
 }
 
-@Composable
-fun OtpInputDialog(
-    show: Boolean,
-    otp: String,
-    onOtpChange: (String) -> Unit,
-    error: String?,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    if (!show) return
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Enter OTP from Employer") },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = otp,
-                    onValueChange = onOtpChange,
-                    label = { Text("OTP") },
-                    singleLine = true,
-                    isError = error != null
-                )
-                if (error != null) {
-                    Text(error, color = MaterialTheme.colorScheme.error)
-                }
-            }
-        },
-        confirmButton = { Button(onClick = onConfirm) { Text("Verify OTP") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
-
-// Keep the existing EmployeeJobsTab and EmployeeProfileTab components unchanged
+// Keep the existing helper composables
 @Composable
 fun EmployeeJobsTab(
     modifier: Modifier = Modifier,
@@ -1594,9 +1737,6 @@ fun ProfileRow(label: String, value: String) {
     }
 }
 
-/**
- * Simple location search dialog
- */
 @Composable
 fun LocationSearchDialog(
     currentDistrict: String,

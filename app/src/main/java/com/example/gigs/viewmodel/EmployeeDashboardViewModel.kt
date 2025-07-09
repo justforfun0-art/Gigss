@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.gigs.data.model.Activity
+import com.example.gigs.data.model.Application
 import com.example.gigs.data.model.ApplicationStatus
 import com.example.gigs.data.model.ApplicationWithJob
 import com.example.gigs.data.model.CategoryStat
@@ -13,11 +14,15 @@ import com.example.gigs.data.model.EmployerProfile
 import com.example.gigs.data.model.Job
 import com.example.gigs.data.model.JobStatus
 import com.example.gigs.data.model.LocationStat
+import com.example.gigs.data.model.WorkSession
+import com.example.gigs.data.remote.SupabaseClient
 import com.example.gigs.data.repository.ApplicationRepository
+import com.example.gigs.data.repository.AuthRepository
 import com.example.gigs.data.repository.DashboardRepository
 import com.example.gigs.data.repository.JobRepository
 import com.example.gigs.data.repository.ProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.github.jan.supabase.postgrest.query.Order
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -216,4 +221,190 @@ class EmployeeDashboardViewModel @Inject constructor(
     }
 
 
+
+}
+
+// Add this to your ViewModel or call it directly to diagnose the issue
+
+class WorkSessionDiagnostic @Inject constructor(
+    private val applicationRepository: ApplicationRepository,
+    private val authRepository: AuthRepository,
+    private val supabaseClient: SupabaseClient
+) {
+
+    suspend fun diagnoseWorkSession(applicationId: String): String {
+        val userId = authRepository.getCurrentUserId()
+        val sb = StringBuilder()
+
+        sb.appendLine("=== WORK SESSION DIAGNOSTIC ===")
+        sb.appendLine("Application ID: $applicationId")
+        sb.appendLine("User ID: $userId")
+        sb.appendLine()
+
+        try {
+            // 1. Check application status
+            val application = supabaseClient
+                .table("applications")
+                .select {
+                    filter { eq("id", applicationId) }
+                }
+                .decodeSingleOrNull<Application>()
+
+            if (application != null) {
+                sb.appendLine("✅ Application found:")
+                sb.appendLine("   Status: '${application.status}'")
+                sb.appendLine("   Employee ID: '${application.employeeId}'")
+                sb.appendLine("   Job ID: '${application.jobId}'")
+                sb.appendLine("   Updated: ${application.updatedAt}")
+            } else {
+                sb.appendLine("❌ Application not found!")
+                return sb.toString()
+            }
+
+            // 2. Check all work sessions for this application
+            val allWorkSessions = supabaseClient
+                .table("work_sessions")
+                .select {
+                    filter { eq("application_id", applicationId) }
+                    order("created_at", Order.DESCENDING)
+                }
+                .decodeList<WorkSession>()
+
+            sb.appendLine()
+            sb.appendLine("Work Sessions (${allWorkSessions.size} found):")
+
+            if (allWorkSessions.isEmpty()) {
+                sb.appendLine("❌ No work sessions found!")
+            } else {
+                allWorkSessions.forEachIndexed { index, session ->
+                    sb.appendLine("${index + 1}. Session ID: ${session.id}")
+                    sb.appendLine("   Status: '${session.status}'")
+                    sb.appendLine("   Employee ID: '${session.employeeId}'")
+                    sb.appendLine("   Employer ID: '${session.employerId}'")
+                    sb.appendLine("   OTP: '${session.otp}'")
+                    sb.appendLine("   Work Start: ${session.workStartTime}")
+                    sb.appendLine("   Work End: ${session.workEndTime}")
+                    sb.appendLine("   Created: ${session.createdAt}")
+                    sb.appendLine()
+                }
+            }
+
+            // 3. Check for user-specific work sessions
+            val userWorkSessions = allWorkSessions.filter { it.employeeId == userId }
+            sb.appendLine("User's Work Sessions (${userWorkSessions.size} found):")
+
+            if (userWorkSessions.isEmpty()) {
+                sb.appendLine("❌ No work sessions found for current user!")
+                sb.appendLine("Expected Employee ID: '$userId'")
+                sb.appendLine("Actual Employee IDs in sessions: ${allWorkSessions.map { "'${it.employeeId}'" }}")
+            }
+
+            // 4. Check for WORK_IN_PROGRESS sessions specifically
+            val activeWorkSessions = userWorkSessions.filter { it.status == "WORK_IN_PROGRESS" }
+            sb.appendLine()
+            sb.appendLine("Active Work Sessions (WORK_IN_PROGRESS): ${activeWorkSessions.size}")
+
+            if (activeWorkSessions.isEmpty()) {
+                sb.appendLine("❌ No WORK_IN_PROGRESS sessions found!")
+                sb.appendLine("Available statuses: ${userWorkSessions.map { "'${it.status}'" }}")
+            }
+
+            // 5. Recommendations
+            sb.appendLine()
+            sb.appendLine("=== RECOMMENDATIONS ===")
+
+            when {
+                application.status != "WORK_IN_PROGRESS" -> {
+                    sb.appendLine("❌ Application status is '${application.status}', should be 'WORK_IN_PROGRESS'")
+                    sb.appendLine("   → Check if work was actually started with OTP")
+                }
+                userWorkSessions.isEmpty() -> {
+                    sb.appendLine("❌ No work sessions for current user")
+                    sb.appendLine("   → User ID mismatch or work session not created")
+                }
+                activeWorkSessions.isEmpty() -> {
+                    val lastSession = userWorkSessions.maxByOrNull { it.createdAt ?: "" }
+                    sb.appendLine("❌ No WORK_IN_PROGRESS sessions")
+                    sb.appendLine("   → Last session status: '${lastSession?.status}'")
+                    when (lastSession?.status) {
+                        "OTP_GENERATED" -> sb.appendLine("   → Work not started yet, need to enter OTP")
+                        "COMPLETION_PENDING" -> sb.appendLine("   → Work completion already initiated")
+                        "WORK_COMPLETED" -> sb.appendLine("   → Work already completed")
+                        else -> sb.appendLine("   → Unknown session state")
+                    }
+                }
+                else -> {
+                    sb.appendLine("✅ Everything looks correct")
+                    sb.appendLine("   → Active work session found")
+                }
+            }
+
+        } catch (e: Exception) {
+            sb.appendLine("❌ Error during diagnosis: ${e.message}")
+        }
+
+        return sb.toString()
+    }
+
+    // Quick fix method
+    suspend fun quickFixWorkSession(applicationId: String): Result<String> {
+        return try {
+            val diagnostic = diagnoseWorkSession(applicationId)
+            Log.d("WorkSessionDiagnostic", diagnostic)
+
+            val userId = authRepository.getCurrentUserId()
+                ?: return Result.failure(Exception("Not authenticated"))
+
+            // Try to find the most recent work session
+            val workSessions = supabaseClient
+                .table("work_sessions")
+                .select {
+                    filter {
+                        eq("application_id", applicationId)
+                        eq("employee_id", userId)
+                    }
+                    order("created_at", Order.DESCENDING)
+                    limit(1)
+                }
+                .decodeList<WorkSession>()
+
+            if (workSessions.isEmpty()) {
+                return Result.failure(Exception("No work sessions found. Contact employer to generate OTP."))
+            }
+
+            val session = workSessions.first()
+
+            when (session.status) {
+                "OTP_GENERATED" -> {
+                    Result.failure(Exception("Work not started. Please enter the OTP provided by your employer."))
+                }
+                "WORK_STARTED" -> {
+                    // Fix the status to WORK_IN_PROGRESS
+                    supabaseClient.table("work_sessions")
+                        .update(mapOf("status" to "WORK_IN_PROGRESS")) {
+                            filter { eq("id", session.id) }
+                        }
+
+                    supabaseClient.table("applications")
+                        .update(mapOf("status" to "WORK_IN_PROGRESS")) {
+                            filter { eq("id", applicationId) }
+                        }
+
+                    Result.success("Fixed: Updated status to WORK_IN_PROGRESS")
+                }
+                "COMPLETION_PENDING" -> {
+                    Result.failure(Exception("Work completion already initiated. Share completion code with employer."))
+                }
+                "WORK_COMPLETED" -> {
+                    Result.failure(Exception("Work already completed."))
+                }
+                else -> {
+                    Result.failure(Exception("Unknown session status: ${session.status}"))
+                }
+            }
+
+        } catch (e: Exception) {
+            Result.failure(Exception("Quick fix failed: ${e.message}"))
+        }
+    }
 }

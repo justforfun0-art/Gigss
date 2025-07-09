@@ -9,6 +9,7 @@ import com.example.gigs.data.model.Application
 import com.example.gigs.data.model.WorkSession
 import com.example.gigs.data.remote.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseExperimental
+import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
@@ -19,12 +20,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import org.slf4j.MDC.put
 import java.time.Duration
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlinx.serialization.json.put
 
 /**
  * Repository for managing job applications with built-in caching - FLOW ISSUES FIXED
@@ -155,7 +160,7 @@ class ApplicationRepository @Inject constructor(
      */
 
     /**
-     * 🚀 FIXED: Get the current user's applications with job details - NO MORE FLOW ISSUES
+     * 🚀 ENHANCED: Get applications with better error handling
      */
     suspend fun getMyApplications(limit: Int = 0): Flow<Result<List<ApplicationWithJob>>> = flow {
         try {
@@ -170,17 +175,17 @@ class ApplicationRepository @Inject constructor(
     }
 
     /**
-     * 🚀 NEW: Direct method for getting applications - NO FLOW COMPLEXITY
+     * 🚀 Direct method for getting applications with enhanced work session support
      */
     internal suspend fun getMyApplicationsDirect(limit: Int = 0): List<ApplicationWithJob> {
         return try {
             withContext(Dispatchers.IO) {
-                withTimeoutOrNull(3000) {
+                withTimeoutOrNull(5000) {
                     Log.d(TAG, "Fetching applications for current user with work sessions")
                     val userId = authRepository.getCurrentUserId()
                         ?: throw Exception("User not authenticated")
 
-                    // Direct API call for applications with explicit column selection
+                    // Get applications with better column selection
                     val applications = supabaseClient
                         .table("applications")
                         .select(columns = Columns.list(
@@ -188,7 +193,6 @@ class ApplicationRepository @Inject constructor(
                             "applied_at", "created_at", "updated_at"
                         )) {
                             filter { eq("employee_id", userId) }
-                            // Order by applied_at if available, fallback to created_at
                             order("applied_at", Order.DESCENDING)
                             if (limit > 0) {
                                 limit(limit.toLong())
@@ -200,22 +204,16 @@ class ApplicationRepository @Inject constructor(
 
                     Log.d(TAG, "Found ${applications.size} applications")
 
-                    // 🚀 ENHANCED: Log status distribution for debugging
-                    val statusCounts = applications.groupBy { it.status }.mapValues { it.value.size }
-                    Log.d(TAG, "Application status distribution: $statusCounts")
-
                     if (applications.isEmpty()) return@withTimeoutOrNull emptyList()
 
                     // Get unique job IDs
                     val jobIds = applications.map { it.jobId }.distinct()
                     Log.d(TAG, "Need to fetch ${jobIds.size} unique jobs")
 
-                    // Batch fetch jobs if reasonable number
+                    // Batch fetch jobs
                     val jobs = if (jobIds.size <= 10) {
-                        Log.d(TAG, "Fetching ${jobIds.size} jobs in a single batch query")
-
                         try {
-                            val inClause = jobIds.joinToString(",") { "\"$it\"" } // Proper escaping
+                            val inClause = jobIds.joinToString(",") { "\"$it\"" }
                             val fetchedJobs = supabaseClient
                                 .table("jobs")
                                 .select {
@@ -226,43 +224,19 @@ class ApplicationRepository @Inject constructor(
                                 .decodeList<Job>()
 
                             Log.d(TAG, "Fetched batch of ${fetchedJobs.size} jobs")
-
-                            // Update cache
-                            val currentTime = System.currentTimeMillis()
-                            fetchedJobs.forEach { job ->
-                                jobCache[job.id] = job
-                                cacheExpiration[job.id] = currentTime + cacheDuration
-                            }
-
                             fetchedJobs
                         } catch (e: Exception) {
-                            Log.w(TAG, "Batch fetch failed, trying individual requests: ${e.message}")
-
-                            // Fallback to individual requests
-                            val individualJobs = mutableListOf<Job>()
-                            jobIds.take(5).forEach { jobId ->
-                                try {
-                                    val job = supabaseClient
-                                        .table("jobs")
-                                        .select { filter { eq("id", jobId) } }
-                                        .decodeSingleOrNull<Job>()
-                                    job?.let { individualJobs.add(it) }
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Failed to fetch job $jobId: ${e.message}")
-                                }
-                            }
-                            individualJobs
+                            Log.w(TAG, "Batch fetch failed: ${e.message}")
+                            emptyList()
                         }
                     } else {
-                        Log.w(TAG, "Too many jobs to fetch (${jobIds.size}), returning applications without job details")
                         emptyList()
                     }
 
-                    // 🚀 NEW: Fetch work sessions for these applications
+                    // 🚀 Enhanced: Fetch work sessions for applications
                     val applicationIds = applications.map { it.id }
                     val workSessions = if (applicationIds.isNotEmpty()) {
                         try {
-                            Log.d(TAG, "Fetching work sessions for ${applicationIds.size} applications")
                             val sessionInClause = applicationIds.joinToString(",") { "\"$it\"" }
                             val fetchedSessions = supabaseClient
                                 .table("work_sessions")
@@ -303,17 +277,16 @@ class ApplicationRepository @Inject constructor(
                                 status = try {
                                     ApplicationStatus.valueOf(app.status.uppercase())
                                 } catch (e: Exception) {
-                                    // 🚀 HANDLE: Map NOT_INTERESTED to appropriate enum if needed
                                     when (app.status.uppercase()) {
                                         "NOT_INTERESTED" -> ApplicationStatus.NOT_INTERESTED
+                                        "COMPLETION_PENDING" -> ApplicationStatus.WORK_IN_PROGRESS // Map to work in progress for UI
                                         else -> ApplicationStatus.APPLIED
                                     }
                                 },
-                                // 🚀 FIX: Use appliedAt if available, fallback to createdAt
                                 appliedAt = app.appliedAt ?: app.createdAt,
                                 updatedAt = app.updatedAt,
                                 job = job,
-                                workSession = workSession // 🚀 NEW: Include work session data
+                                workSession = workSession
                             )
                         }
                     }
@@ -634,7 +607,7 @@ class ApplicationRepository @Inject constructor(
     }
 
     /**
-     * 🚀 FIXED: Update application status for employees (using job ID) - NO MORE FLOW COMPLEXITY
+     * 🚀 ENHANCED: Update employee application status with work completion support
      */
     suspend fun updateEmployeeApplicationStatus(jobId: String, status: String): Flow<Result<Unit>> = flow {
         try {
@@ -645,24 +618,11 @@ class ApplicationRepository @Inject constructor(
         }
     }
 
+
     private val processingOperations = ConcurrentHashMap<String, Long>()
     private val operationTimeout = 5000L // 5 seconds
 
-    /**
-     * 🚀 CRITICAL FIX: Centralized status validation
-     */
-
-    /**
-     * 🚀 CRITICAL FIX: Check if operation is already in progress
-     */
-
-    /**
-     * 🚀 NEW: Direct status update method - NO FLOW COLLECTIONS
-     */
-
-    // Add these methods to your ApplicationRepository.kt for the employer side
-
-    /**
+      /**
      * 🚀 NEW: Employer accepts application and moves status from SELECTED to HIRED
      * This happens when employee clicks "Accept Job" button
      */
@@ -715,7 +675,6 @@ class ApplicationRepository @Inject constructor(
      */
     suspend fun checkJobDateConflict(employeeId: String, newJobId: String): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
-            // Get the new job details
             val newJob = supabaseClient
                 .table("jobs")
                 .select {
@@ -723,21 +682,19 @@ class ApplicationRepository @Inject constructor(
                 }
                 .decodeSingleOrNull<Job>() ?: return@withContext Result.failure(Exception("Job not found"))
 
-            // Get all accepted/hired jobs for this employee
             val existingAcceptedJobs = supabaseClient
                 .table("applications")
                 .select {
                     filter {
                         eq("employee_id", employeeId)
                         or {
-                            eq("status", "HIRED")
+                            eq("status", "ACCEPTED")
                             eq("status", "WORK_IN_PROGRESS")
                         }
                     }
                 }
                 .decodeList<Application>()
 
-            // For each existing job, check if there's a date/time conflict
             for (existingApp in existingAcceptedJobs) {
                 val existingJob = supabaseClient
                     .table("jobs")
@@ -747,23 +704,18 @@ class ApplicationRepository @Inject constructor(
                     .decodeSingleOrNull<Job>()
 
                 if (existingJob != null) {
-                    // Here you would implement your actual date/time conflict logic
-                    // For now, we'll do a simple check based on job creation dates
-                    // You should implement proper date/time parsing and comparison
-
-                    // Example: If jobs are on the same day (simplified)
-                    val newJobDate = newJob.createdAt?.substring(0, 10) // Get date part
+                    val newJobDate = newJob.createdAt?.substring(0, 10)
                     val existingJobDate = existingJob.createdAt?.substring(0, 10)
 
                     if (newJobDate == existingJobDate) {
                         Log.w(TAG, "⚠️ Date conflict detected: New job $newJobId conflicts with existing job ${existingJob.id}")
-                        return@withContext Result.success(true) // Conflict found
+                        return@withContext Result.success(true)
                     }
                 }
             }
 
             Log.d(TAG, "✅ No date conflicts found for employee $employeeId and job $newJobId")
-            Result.success(false) // No conflicts
+            Result.success(false)
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error checking job date conflict: ${e.message}")
@@ -985,23 +937,17 @@ class ApplicationRepository @Inject constructor(
                 emit(Result.failure(Exception("Failed to apply for job")))
             }
         } catch (e: Exception) {
-            // Don't emit here - let Flow.catch handle it
             throw e
         }
     }.catch { e ->
-        // Proper Flow.catch usage
         Log.e(TAG, "Flow error in applyForJob: ${e.message}")
         emit(Result.failure(e))
     }
 
-    /**
-     * 🚀 NEW: Direct application method - NO COMPLEX FLOWS
-     */
     @OptIn(SupabaseExperimental::class)
     private suspend fun applyForJobDirect(jobId: String): ApplicationWithJob? {
         val operationKey = "apply_$jobId"
 
-        // 🚀 CRITICAL: Prevent duplicate applications
         if (isOperationInProgress(operationKey)) {
             Log.w(TAG, "Apply operation already in progress for job $jobId")
             return null
@@ -1017,7 +963,7 @@ class ApplicationRepository @Inject constructor(
 
                     Log.d(TAG, "Applying for job: $jobId by user: $userId")
 
-                    // Step 1: Check for existing application
+                    // Check for existing application
                     val existingApplications = supabaseClient
                         .table("applications")
                         .select {
@@ -1028,13 +974,11 @@ class ApplicationRepository @Inject constructor(
                         }
                         .decodeList<Map<String, String>>()
 
-                    Log.d(TAG, "Found ${existingApplications.size} existing applications")
-
                     // Get job details
                     val jobObject = getJobByIdDirect(jobId)
                         ?: throw Exception("Job not found")
 
-                    val timestamp = java.time.Instant.now().toString()
+                    val timestamp = Instant.now().toString()
                     val validatedStatus = validateAndNormalizeStatus("APPLIED")
 
                     if (existingApplications.isNotEmpty()) {
@@ -1042,7 +986,6 @@ class ApplicationRepository @Inject constructor(
                         val currentStatus = existingApp["status"] ?: ""
 
                         if (currentStatus.equals("APPLIED", ignoreCase = true)) {
-                            Log.d(TAG, "Application already has APPLIED status")
                             return@withTimeoutOrNull ApplicationWithJob(
                                 id = existingApp["id"] ?: "",
                                 jobId = jobId,
@@ -1055,12 +998,10 @@ class ApplicationRepository @Inject constructor(
                         }
 
                         // Update existing application
-                        Log.d(TAG, "Updating existing application to APPLIED")
-
                         supabaseClient
                             .table("applications")
                             .update(mapOf(
-                                "status" to validatedStatus, // Use validated status
+                                "status" to validatedStatus,
                                 "updated_at" to timestamp
                             )) {
                                 filter {
@@ -1079,13 +1020,11 @@ class ApplicationRepository @Inject constructor(
                         )
                     }
 
-                    // Step 3: Create new application
-                    Log.d(TAG, "Creating new application for job: $jobId")
-
+                    // Create new application
                     val applicationData = mapOf(
                         "job_id" to jobId,
                         "employee_id" to userId,
-                        "status" to validatedStatus, // Use validated status
+                        "status" to validatedStatus,
                         "applied_at" to timestamp,
                         "created_at" to timestamp,
                         "updated_at" to timestamp
@@ -1112,7 +1051,6 @@ class ApplicationRepository @Inject constructor(
             Log.e(TAG, "❌ Error applying for job: ${e.message}")
             null
         } finally {
-            // 🚀 CRITICAL: Always cleanup
             processingOperations.remove(operationKey)
         }
     }
@@ -1138,12 +1076,10 @@ class ApplicationRepository @Inject constructor(
      */
     private suspend fun getJobByIdDirect(jobId: String): Job? {
         return try {
-            // Check cache first
             if (jobCache.containsKey(jobId) && System.currentTimeMillis() <= (cacheExpiration[jobId] ?: 0L)) {
                 return jobCache[jobId]
             }
 
-            // Fetch from database with timeout
             val job = withTimeoutOrNull(2000) {
                 supabaseClient
                     .table("jobs")
@@ -1153,7 +1089,6 @@ class ApplicationRepository @Inject constructor(
                     .decodeSingleOrNull<Job>()
             }
 
-            // Cache the job if found
             if (job != null) {
                 jobCache[job.id] = job
                 cacheExpiration[job.id] = System.currentTimeMillis() + cacheDuration
@@ -1262,27 +1197,6 @@ class ApplicationRepository @Inject constructor(
         }
     }
 
-
-    /**
-     * 2. Employee starts work with OTP
-     */
-    /**
-     * 🚀 ENHANCED: Employee starts work with OTP - with better error handling
-     */
-// First, let's add comprehensive debugging to the OTP verification process
-
-    /**
-     * Enhanced startWorkWithOtp with detailed debugging
-     */
-    // Add this enhanced method to ApplicationRepository.kt
-
-    /**
-     * Enhanced startWorkWithOtp with better error handling and expired OTP management
-     */
-    // 🚀 ENHANCED DEBUG VERSION: Add this to your ApplicationRepository.kt
-
-    // 🚀 ENHANCED startWorkWithOtp method for ApplicationRepository.kt
-
     /**
      * 🚀 COMPLETE startWorkWithOtp function for ApplicationRepository.kt
      * This function handles OTP verification and starts work sessions
@@ -1300,9 +1214,7 @@ class ApplicationRepository @Inject constructor(
                 return@withContext Result.failure(Exception("Not authenticated"))
             }
 
-            // 🚀 STEP 1: Get work session with enhanced error handling
-            Log.d(TAG, "🔍 === STEP 1: FETCHING WORK SESSION ===")
-
+            // Get work session
             val workSessionsForApp = try {
                 supabaseClient
                     .table("work_sessions")
@@ -1321,7 +1233,6 @@ class ApplicationRepository @Inject constructor(
 
             Log.d(TAG, "🔍 Found ${workSessionsForApp.size} work sessions for this application")
 
-            // Find the most recent work session
             val workSession = workSessionsForApp
                 .sortedByDescending { it.createdAt }
                 .firstOrNull()
@@ -1331,21 +1242,11 @@ class ApplicationRepository @Inject constructor(
                 return@withContext Result.failure(Exception("No work session found. Please contact your employer to generate an OTP."))
             }
 
-            Log.d(TAG, "🔍 === STEP 2: ANALYZING WORK SESSION ===")
-            Log.d(TAG, "🔍 Work Session ID: ${workSession.id}")
             Log.d(TAG, "🔍 Work Session Status: ${workSession.status}")
             Log.d(TAG, "🔍 Work Session OTP: '${workSession.otp}'")
-            Log.d(TAG, "🔍 Work Session OTP Length: ${workSession.otp.length}")
-            Log.d(TAG, "🔍 Work Session Expiry: ${workSession.otpExpiry}")
 
-            // Check if OTP is expired
-            if (workSession.status == "EXPIRED") {
-                Log.e(TAG, "❌ Work session OTP has expired")
-                return@withContext Result.failure(Exception("The OTP has expired. Please contact your employer for a new OTP."))
-            }
-
-            // Check if work has already started
-            if (workSession.status == "WORK_STARTED") {
+            // ✅ FIXED: Check if work has already started (using WORK_IN_PROGRESS)
+            if (workSession.status == "WORK_IN_PROGRESS") {
                 Log.w(TAG, "⚠️ Work has already started for this session")
                 return@withContext Result.success(true)
             }
@@ -1356,61 +1257,25 @@ class ApplicationRepository @Inject constructor(
                 return@withContext Result.failure(Exception("Work session is in invalid state: ${workSession.status}"))
             }
 
-            // 🚀 STEP 3: ENHANCED OTP COMPARISON
-            Log.d(TAG, "🔍 === STEP 3: ENHANCED OTP COMPARISON ===")
-
+            // Enhanced OTP comparison
             val sessionOtp = workSession.otp
             val inputOtp = enteredOtp.trim()
 
-            Log.d(TAG, "🔍 Session OTP: '$sessionOtp'")
-            Log.d(TAG, "🔍 Input OTP: '$inputOtp'")
-            Log.d(TAG, "🔍 Session OTP Length: ${sessionOtp.length}")
-            Log.d(TAG, "🔍 Input OTP Length: ${inputOtp.length}")
-
-            // 🚀 ENHANCED: Multiple comparison methods with normalization
             val normalizedSessionOtp = sessionOtp.padStart(6, '0')
             val normalizedInputOtp = inputOtp.padStart(6, '0')
 
-            Log.d(TAG, "🔍 Normalized Session OTP: '$normalizedSessionOtp'")
-            Log.d(TAG, "🔍 Normalized Input OTP: '$normalizedInputOtp'")
-
-            // Try different comparison methods
-            val method1 = normalizedSessionOtp == normalizedInputOtp
-            val method2 = sessionOtp == inputOtp
-            val method3 = try {
-                sessionOtp.toInt() == inputOtp.toInt()
-            } catch (e: Exception) {
-                Log.d(TAG, "   Method 3 exception: ${e.message}")
-                false
-            }
-            val method4 = sessionOtp.trimStart('0') == inputOtp.trimStart('0')
-
-            Log.d(TAG, "🔍 === COMPARISON METHODS ===")
-            Log.d(TAG, "   Method 1 (Normalized): $method1")
-            Log.d(TAG, "   Method 2 (Direct): $method2")
-            Log.d(TAG, "   Method 3 (Integer): $method3")
-            Log.d(TAG, "   Method 4 (No Leading Zeros): $method4")
-
-            val otpMatches = method1 || method2 || method3 || method4
-            Log.d(TAG, "🔍 Final OTP Match Result: $otpMatches")
+            val otpMatches = normalizedSessionOtp == normalizedInputOtp ||
+                    sessionOtp == inputOtp ||
+                    try { sessionOtp.toInt() == inputOtp.toInt() } catch (e: Exception) { false }
 
             if (!otpMatches) {
-                Log.e(TAG, "❌ ALL OTP COMPARISON METHODS FAILED!")
-                Log.e(TAG, "   Session OTP: '$sessionOtp'")
-                Log.e(TAG, "   Input OTP: '$inputOtp'")
-                Log.e(TAG, "   Normalized Session: '$normalizedSessionOtp'")
-                Log.e(TAG, "   Normalized Input: '$normalizedInputOtp'")
-
-                // 🚀 Additional debug info
-                Log.e(TAG, "   Session OTP chars: ${sessionOtp.toCharArray().joinToString(",") { "'$it'(${it.code})" }}")
-                Log.e(TAG, "   Input OTP chars: ${inputOtp.toCharArray().joinToString(",") { "'$it'(${it.code})" }}")
-
+                Log.e(TAG, "❌ OTP validation failed!")
                 return@withContext Result.failure(Exception("Invalid OTP. Please check and try again."))
             }
 
             Log.d(TAG, "✅ OTP validation successful!")
 
-            // 🚀 STEP 4: Check expiry (but don't fail if parsing fails)
+            // Check expiry
             try {
                 if (workSession.otpExpiry.isNotBlank()) {
                     val expiry = java.time.Instant.parse(workSession.otpExpiry)
@@ -1419,22 +1284,19 @@ class ApplicationRepository @Inject constructor(
                     if (now.isAfter(expiry)) {
                         Log.e(TAG, "❌ OTP expired at: $expiry")
                         return@withContext Result.failure(Exception("OTP has expired. Please contact your employer for a new one."))
-                    } else {
-                        Log.d(TAG, "✅ OTP is still valid (expires at: $expiry)")
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Could not parse expiry time, continuing: ${e.message}")
             }
 
-            // 🚀 STEP 5: Update database
+            // ✅ FIXED: Update to WORK_IN_PROGRESS (consistent with UI)
             val now = java.time.Instant.now().toString()
-            Log.d(TAG, "🔍 === STEP 5: UPDATING DATABASE ===")
 
             try {
                 supabaseClient.table("work_sessions")
                     .update(mapOf(
-                        "status" to "WORK_STARTED",
+                        "status" to "WORK_IN_PROGRESS",  // ✅ CONSISTENT STATUS
                         "otp_used_at" to now,
                         "work_start_time" to now,
                         "updated_at" to now
@@ -1442,7 +1304,7 @@ class ApplicationRepository @Inject constructor(
                         filter { eq("id", workSession.id) }
                     }
 
-                Log.d(TAG, "✅ Work session updated successfully")
+                Log.d(TAG, "✅ Work session updated to WORK_IN_PROGRESS")
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Error updating work session: ${e.message}")
                 return@withContext Result.failure(Exception("Failed to start work session: ${e.message}"))
@@ -1451,13 +1313,13 @@ class ApplicationRepository @Inject constructor(
             try {
                 supabaseClient.table("applications")
                     .update(mapOf(
-                        "status" to "WORK_IN_PROGRESS",
+                        "status" to "WORK_IN_PROGRESS",  // ✅ CONSISTENT STATUS
                         "updated_at" to now
                     )) {
                         filter { eq("id", applicationId) }
                     }
 
-                Log.d(TAG, "✅ Application status updated successfully")
+                Log.d(TAG, "✅ Application status updated to WORK_IN_PROGRESS")
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Error updating application status: ${e.message}")
                 return@withContext Result.failure(Exception("Failed to update application status: ${e.message}"))
@@ -1472,6 +1334,7 @@ class ApplicationRepository @Inject constructor(
             Result.failure(Exception("Unexpected error during OTP verification: ${e.message}"))
         }
     }
+
 
     // Add these methods to your existing ApplicationRepository.kt
 
@@ -1491,7 +1354,7 @@ class ApplicationRepository @Inject constructor(
 
             Log.d(TAG, "🚀 Employer ID: ${userId.take(8)}...")
 
-            // Step 1: Get application details
+            // Get application details
             val application = supabaseClient
                 .table("applications")
                 .select {
@@ -1505,11 +1368,8 @@ class ApplicationRepository @Inject constructor(
             }
 
             Log.d(TAG, "✅ Found application: ${application.id}")
-            Log.d(TAG, "   Job ID: ${application.jobId}")
-            Log.d(TAG, "   Employee ID: ${application.employeeId}")
-            Log.d(TAG, "   Current Status: ${application.status}")
 
-            // Step 2: Get job details to verify employer ownership
+            // Get job details to verify employer ownership
             val job = supabaseClient
                 .table("jobs")
                 .select {
@@ -1522,17 +1382,12 @@ class ApplicationRepository @Inject constructor(
                 return@withContext Result.failure(Exception("Job not found"))
             }
 
-            Log.d(TAG, "✅ Found job: ${job.title}")
-            Log.d(TAG, "   Job Employer ID: ${job.employerId}")
-
             if (job.employerId != userId) {
                 Log.e(TAG, "❌ Unauthorized: Current user $userId is not the job employer ${job.employerId}")
                 return@withContext Result.failure(Exception("Unauthorized - You can only generate OTP for your own job applications"))
             }
 
-            Log.d(TAG, "✅ Authorization verified")
-
-            // Step 3: Check if work session already exists
+            // Check if work session already exists
             val existingSession = supabaseClient
                 .table("work_sessions")
                 .select {
@@ -1544,21 +1399,14 @@ class ApplicationRepository @Inject constructor(
                 }
                 .decodeSingleOrNull<WorkSession>()
 
-            if (existingSession != null) {
-                Log.d(TAG, "ℹ️ Found existing work session: ${existingSession.id}")
-                Log.d(TAG, "   Status: ${existingSession.status}")
-                Log.d(TAG, "   OTP: ${existingSession.otp}")
-            }
-
-            // Step 4: Generate new OTP and expiry
+            // Generate new OTP and expiry
             val otp = generateOtp()
             val expiry = Instant.now().plusSeconds(TimeUnit.MINUTES.toSeconds(30)).toString()
             val now = Instant.now().toString()
 
             Log.d(TAG, "🔐 Generated new OTP: $otp")
-            Log.d(TAG, "⏰ Expiry time: $expiry")
 
-            // Step 5: Update or create work session
+            // Update or create work session
             if (existingSession != null) {
                 Log.d(TAG, "🔄 Updating existing work session...")
 
@@ -1571,8 +1419,6 @@ class ApplicationRepository @Inject constructor(
                     )) {
                         filter { eq("id", existingSession.id) }
                     }
-
-                Log.d(TAG, "✅ Updated existing work session with new OTP")
             } else {
                 Log.d(TAG, "➕ Creating new work session...")
 
@@ -1588,17 +1434,11 @@ class ApplicationRepository @Inject constructor(
                     "updated_at" to now
                 )
 
-                Log.d(TAG, "📝 Work session data: $workSessionData")
-
                 supabaseClient.table("work_sessions")
                     .insert(workSessionData)
-
-                Log.d(TAG, "✅ Created new work session")
             }
 
-            // Step 6: Update application status to SELECTED
-            Log.d(TAG, "🔄 Updating application status to SELECTED...")
-
+            // Update application status to SELECTED
             supabaseClient.table("applications")
                 .update(mapOf(
                     "status" to "SELECTED",
@@ -1607,11 +1447,7 @@ class ApplicationRepository @Inject constructor(
                     filter { eq("id", applicationId) }
                 }
 
-            Log.d(TAG, "✅ Updated application status to SELECTED")
-
             Log.d(TAG, "🚀 === OTP GENERATION COMPLETED SUCCESSFULLY ===")
-            Log.d(TAG, "🎉 Final OTP: $otp")
-
             Result.success(otp)
 
         } catch (e: Exception) {
@@ -1650,7 +1486,6 @@ class ApplicationRepository @Inject constructor(
                 Log.d(TAG, "   Session ID: ${workSession.id}")
                 Log.d(TAG, "   Status: ${workSession.status}")
                 Log.d(TAG, "   OTP: ${workSession.otp}")
-                Log.d(TAG, "   Expiry: ${workSession.otpExpiry}")
             } else {
                 Log.d(TAG, "ℹ️ No work session found for application: $applicationId")
             }
@@ -1935,84 +1770,124 @@ class ApplicationRepository @Inject constructor(
     suspend fun completeWork(applicationId: String): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val userId = authRepository.getCurrentUserId()
-                ?: return@withContext Result.failure(Exception("Not authenticated"))
+                ?: return@withContext Result.failure(Exception("User not authenticated"))
 
-            Log.d(TAG, "🚀 === INITIATING EMPLOYEE WORK COMPLETION ===")
+            Log.d(TAG, "🚀 === EMPLOYEE WORK COMPLETION (ENHANCED) ===")
             Log.d(TAG, "Application ID: $applicationId")
             Log.d(TAG, "Employee ID: $userId")
 
-            // 🚀 Get active work session
+            // ✅ FIXED: Look for WORK_IN_PROGRESS status specifically
             val workSession = supabaseClient
                 .table("work_sessions")
                 .select {
                     filter {
                         eq("application_id", applicationId)
                         eq("employee_id", userId)
-                        eq("status", "WORK_STARTED")
+                        eq("status", "WORK_IN_PROGRESS")  // ✅ CONSISTENT STATUS
                     }
                     order("created_at", Order.DESCENDING)
                     limit(1)
                 }
                 .decodeSingleOrNull<WorkSession>()
-                ?: return@withContext Result.failure(Exception("No active work session found"))
+
+            if (workSession == null) {
+                Log.e(TAG, "❌ No active work session found for application $applicationId")
+
+                // ✅ ENHANCED: Check what work sessions exist for debugging
+                val allWorkSessions = supabaseClient
+                    .table("work_sessions")
+                    .select {
+                        filter {
+                            eq("application_id", applicationId)
+                            eq("employee_id", userId)
+                        }
+                    }
+                    .decodeList<WorkSession>()
+
+                Log.d(TAG, "🔍 DEBUG: Found ${allWorkSessions.size} work sessions for this application:")
+                allWorkSessions.forEach { session ->
+                    Log.d(TAG, "   Session ID: ${session.id}, Status: ${session.status}")
+                }
+
+                return@withContext Result.failure(Exception("No active work session found. Make sure you have started work properly."))
+            }
 
             Log.d(TAG, "✅ Found active work session: ${workSession.id}")
+            Log.d(TAG, "   Work start time: ${workSession.workStartTime}")
+            Log.d(TAG, "   Current status: ${workSession.status}")
 
-            // 🚀 Generate completion OTP for employer verification
-            val completionOtp = generateOtp()
-            val otpExpiry = Instant.now().plusSeconds(TimeUnit.MINUTES.toSeconds(30)).toString()
-            val now = Instant.now().toString()
-
-            // 🚀 Calculate work duration
-            val workStartTime = if (workSession.workStartTime != null) {
+            // Calculate work duration
+            val workStartTime = if (!workSession.workStartTime.isNullOrBlank()) {
                 try {
                     Instant.parse(workSession.workStartTime)
                 } catch (e: Exception) {
-                    Instant.now().minusSeconds(3600) // Default to 1 hour ago
+                    Log.w(TAG, "⚠️ Failed to parse work start time, using 1 hour ago")
+                    Instant.now().minusSeconds(3600)
                 }
             } else {
+                Log.w(TAG, "⚠️ No work start time found, using 1 hour ago as default")
                 Instant.now().minusSeconds(3600)
             }
 
             val workEndTime = Instant.now()
             val durationMinutes = Duration.between(workStartTime, workEndTime).toMinutes().toInt()
 
-            Log.d(TAG, "⏱️ Work duration calculated: $durationMinutes minutes")
+            val validatedDuration = when {
+                durationMinutes < 1 -> 1
+                durationMinutes > 1440 -> 480  // 8 hours max
+                else -> durationMinutes
+            }
+
+            Log.d(TAG, "⏱️ Work duration: $validatedDuration minutes")
+
+            // Generate completion OTP
+            val completionOtp = generateOtp()
+            val otpExpiry = Instant.now().plusSeconds(TimeUnit.MINUTES.toSeconds(30)).toString()
+            val now = Instant.now().toString()
+
             Log.d(TAG, "🔐 Generated completion OTP: $completionOtp")
 
-            // 🚀 CRITICAL FIX: Use specific types instead of Any to avoid serialization error
+            // Update work session to completion pending
             val workSessionUpdateData = mapOf(
                 "status" to "COMPLETION_PENDING",
                 "work_end_time" to now,
-                "work_duration_minutes" to durationMinutes,
-                "completion_otp" to completionOtp,  // Store completion OTP
-                "otp_expiry" to otpExpiry,          // Expiry for completion OTP
+                "work_duration_minutes" to validatedDuration.toString(),
+                "completion_otp" to completionOtp,
+                "completion_otp_expiry" to otpExpiry,
                 "updated_at" to now
             )
 
+            try {
+                supabaseClient.table("work_sessions")
+                    .update(workSessionUpdateData) {
+                        filter { eq("id", workSession.id) }
+                    }
+
+                Log.d(TAG, "✅ Work session updated to COMPLETION_PENDING")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to update work session: ${e.message}")
+                return@withContext Result.failure(Exception("Failed to update work session: ${e.message}"))
+            }
+
+            // Update application status
             val applicationUpdateData = mapOf(
                 "status" to "COMPLETION_PENDING",
                 "updated_at" to now
             )
 
-            // 🚀 Update work session with completion data
-            supabaseClient.table("work_sessions")
-                .update(workSessionUpdateData) {
-                    filter { eq("id", workSession.id) }
-                }
+            try {
+                supabaseClient.table("applications")
+                    .update(applicationUpdateData) {
+                        filter { eq("id", applicationId) }
+                    }
 
-            Log.d(TAG, "✅ Work session updated to COMPLETION_PENDING")
+                Log.d(TAG, "✅ Application updated to COMPLETION_PENDING")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to update application: ${e.message}")
+                return@withContext Result.failure(Exception("Failed to update application status: ${e.message}"))
+            }
 
-            // 🚀 Update application status
-            supabaseClient.table("applications")
-                .update(applicationUpdateData) {
-                    filter { eq("id", applicationId) }
-                }
-
-            Log.d(TAG, "✅ Application updated to COMPLETION_PENDING")
-            Log.d(TAG, "🎉 Work completion initiated successfully!")
-            Log.d(TAG, "📱 Completion OTP generated: $completionOtp (valid for 30 minutes)")
-
+            Log.d(TAG, "🎉 === WORK COMPLETION INITIATED SUCCESSFULLY ===")
             Result.success(true)
 
         } catch (e: Exception) {
@@ -2021,119 +1896,570 @@ class ApplicationRepository @Inject constructor(
         }
     }
 
-    /**
-     * 🚀 NEW: Get work session with completion data
-     */
-    suspend fun getWorkSessionWithCompletion(applicationId: String): Result<WorkSession?> = withContext(Dispatchers.IO) {
-        try {
-            Log.d(TAG, "🔍 Getting work session with completion data for: $applicationId")
 
-            val workSession = supabaseClient
-                .table("work_sessions")
-                .select {
-                    filter { eq("application_id", applicationId) }
-                    order("created_at", Order.DESCENDING)
-                    limit(1)
-                }
-                .decodeSingleOrNull<WorkSession>()
-
-            if (workSession != null) {
-                Log.d(TAG, "✅ Found work session: ${workSession.id}")
-                Log.d(TAG, "   Status: ${workSession.status}")
-                if (workSession.status == "COMPLETION_PENDING") {
-                    Log.d(TAG, "   Completion OTP available: ${workSession.otp}")
-                }
-            } else {
-                Log.d(TAG, "ℹ️ No work session found")
-            }
-
-            Result.success(workSession)
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error getting work session: ${e.message}")
-            Result.failure(e)
-        }
-    }
 
     /**
-     * 🚀 FIXED: Employee initiates work completion and generates completion OTP
+     * ✅ FIXED: Enhanced debugging method to check work session status
      */
-    suspend fun initiateWorkCompletion(applicationId: String): Result<String> = withContext(Dispatchers.IO) {
-        try {
-            val userId = authRepository.getCurrentUserId()
-                ?: return@withContext Result.failure(Exception("Not authenticated"))
+    suspend fun debugWorkSessionStatus(applicationId: String): String {
+        return try {
+            val userId = authRepository.getCurrentUserId() ?: return "No user authenticated"
 
-            Log.d(TAG, "🚀 === INITIATING WORK COMPLETION ===")
-            Log.d(TAG, "Application ID: $applicationId")
-            Log.d(TAG, "Employee ID: $userId")
+            Log.d(TAG, "🐛 === DEBUGGING WORK SESSION STATUS ===")
+            Log.d(TAG, "🐛 Application ID: $applicationId")
+            Log.d(TAG, "🐛 User ID: $userId")
 
-            // 🚀 Get active work session
-            val workSession = supabaseClient
+            val allWorkSessions = supabaseClient
                 .table("work_sessions")
                 .select {
                     filter {
                         eq("application_id", applicationId)
-                        eq("employee_id", userId)
-                        eq("status", "WORK_STARTED")
+                    }
+                }
+                .decodeList<WorkSession>()
+
+            val debugInfo = StringBuilder()
+            debugInfo.append("Found ${allWorkSessions.size} work sessions:\n")
+
+            allWorkSessions.forEachIndexed { index, session ->
+                debugInfo.append("Session $index:\n")
+                debugInfo.append("  ID: ${session.id}\n")
+                debugInfo.append("  Status: '${session.status}'\n")
+                debugInfo.append("  Employee ID: '${session.employeeId}'\n")
+                debugInfo.append("  OTP: '${session.otp}'\n")
+                debugInfo.append("  Work Start: ${session.workStartTime}\n")
+                debugInfo.append("  Created: ${session.createdAt}\n")
+                debugInfo.append("---\n")
+            }
+
+            // Check application status too
+            val application = supabaseClient
+                .table("applications")
+                .select {
+                    filter { eq("id", applicationId) }
+                }
+                .decodeSingleOrNull<Application>()
+
+            debugInfo.append("Application Status: '${application?.status}'\n")
+
+            val debugMessage = debugInfo.toString()
+            Log.d(TAG, "🐛 Debug Info:\n$debugMessage")
+
+            debugMessage
+
+        } catch (e: Exception) {
+            val error = "Error debugging: ${e.message}"
+            Log.e(TAG, "🐛 $error")
+            error
+        }
+    }
+
+// CORRECTED: Using .table() method consistently
+
+    // Fixed ApplicationRepository.kt - Work Completion Issue
+
+// In your ApplicationRepository.kt, update the initiateWorkCompletion method:
+
+    suspend fun initiateWorkCompletion(applicationId: String): Result<String> {
+        return try {
+            Log.d(TAG, "🚀 Starting work completion for application: $applicationId")
+
+            val currentUserId = authRepository.getCurrentUserId()
+            if (currentUserId.isNullOrEmpty()) {
+                return Result.failure(Exception("User not authenticated"))
+            }
+
+            // Get application and verify ownership
+            val applications = supabaseClient
+                .table("applications")
+                .select {
+                    filter {
+                        eq("id", applicationId)
+                        eq("employee_id", currentUserId)
+                    }
+                }
+                .decodeList<Application>()
+
+            if (applications.isEmpty()) {
+                return Result.failure(Exception("Application not found"))
+            }
+
+            val application = applications.first()
+
+            // 🚀 FIXED: Check if application allows completion (both WORK_IN_PROGRESS and COMPLETION_PENDING)
+            if (application.status !in listOf("WORK_IN_PROGRESS", "COMPLETION_PENDING")) {
+                return Result.failure(Exception("Work is not in correct state for completion. Current status: ${application.status}"))
+            }
+
+            // Get work session - look for either WORK_IN_PROGRESS or COMPLETION_PENDING
+            val workSessions = supabaseClient.table("work_sessions")
+                .select {
+                    filter {
+                        eq("application_id", applicationId)
+                        eq("employee_id", currentUserId)
                     }
                     order("created_at", Order.DESCENDING)
                     limit(1)
                 }
-                .decodeSingleOrNull<WorkSession>()
-                ?: return@withContext Result.failure(Exception("No active work session found"))
+                .decodeList<WorkSession>()
 
-            Log.d(TAG, "Found work session: ${workSession.id}")
-
-            // 🚀 Generate completion OTP
-            val completionOtp = generateOtp()
-            val otpExpiry = Instant.now().plusSeconds(TimeUnit.MINUTES.toSeconds(30)).toString()
-            val now = Instant.now().toString()
-
-            // 🚀 Calculate work duration
-            val workStartTime = if (workSession.workStartTime != null) {
-                Instant.parse(workSession.workStartTime)
-            } else {
-                Instant.now().minusSeconds(3600) // Default to 1 hour ago if no start time
+            if (workSessions.isEmpty()) {
+                return Result.failure(Exception("No work session found for this application"))
             }
-            val workEndTime = Instant.now()
-            val durationMinutes = Duration.between(workStartTime, workEndTime).toMinutes().toInt()
 
-            Log.d(TAG, "Work duration: $durationMinutes minutes")
+            val workSession = workSessions.first()
 
-            // 🚀 CRITICAL FIX: Use specific types instead of Any for serialization
-            val workSessionUpdateData = mapOf(
-                "status" to "COMPLETION_PENDING",
-                "work_end_time" to now,
-                "work_duration_minutes" to durationMinutes,
-                "completion_otp" to completionOtp,
-                "otp_expiry" to otpExpiry,
-                "updated_at" to now
-            )
+            Log.d(TAG, "🔍 Found work session with status: ${workSession.status}")
 
-            val applicationUpdateData = mapOf(
-                "status" to "COMPLETION_PENDING",
-                "updated_at" to now
-            )
+            // Handle different work session states
+            when (workSession.status) {
+                "COMPLETION_PENDING" -> {
+                    // 🚀 FIXED: Work completion already initiated - return the existing OTP
+                    val completionOtp = workSession.completionOtp
+                    if (completionOtp.isNullOrBlank()) {
+                        // Generate new completion OTP since existing one is missing
+                        val newCompletionOtp = (100000..999999).random().toString()
+                        val newCompletionOtpExpiry = Instant.now().plus(Duration.ofMinutes(30)).toString()
 
-            // 🚀 Update work session with completion data
-            supabaseClient.table("work_sessions")
-                .update(workSessionUpdateData) {
-                    filter { eq("id", workSession.id) }
+                        supabaseClient.table("work_sessions")
+                            .update(mapOf(
+                                "completion_otp" to newCompletionOtp,
+                                "completion_otp_expiry" to newCompletionOtpExpiry,
+                                "updated_at" to Instant.now().toString()
+                            )) {
+                                filter { eq("id", workSession.id) }
+                            }
+
+                        Log.d(TAG, "🔄 Generated new completion OTP: $newCompletionOtp")
+                        return Result.success("Work completion refreshed! Share completion code $newCompletionOtp with your employer")
+                    }
+
+                    // Check if OTP is still valid
+                    val isExpired = try {
+                        if (!workSession.completionOtpExpiry.isNullOrBlank()) {
+                            val expiry = Instant.parse(workSession.completionOtpExpiry)
+                            Instant.now().isAfter(expiry)
+                        } else false
+                    } catch (e: Exception) {
+                        false
+                    }
+
+                    if (isExpired) {
+                        // Generate new completion OTP since the old one expired
+                        val newCompletionOtp = (100000..999999).random().toString()
+                        val newCompletionOtpExpiry = Instant.now().plus(Duration.ofMinutes(30)).toString()
+
+                        supabaseClient.table("work_sessions")
+                            .update(mapOf(
+                                "completion_otp" to newCompletionOtp,
+                                "completion_otp_expiry" to newCompletionOtpExpiry,
+                                "updated_at" to Instant.now().toString()
+                            )) {
+                                filter { eq("id", workSession.id) }
+                            }
+
+                        Log.d(TAG, "🔄 Generated new completion OTP: $newCompletionOtp")
+                        return Result.success("Work completion refreshed! Share completion code $newCompletionOtp with your employer")
+                    } else {
+                        Log.d(TAG, "✅ Returning existing completion OTP: $completionOtp")
+                        return Result.success("Work completion already initiated! Share completion code $completionOtp with your employer")
+                    }
                 }
 
-            // 🚀 Update application status
-            supabaseClient.table("applications")
-                .update(applicationUpdateData) {
-                    filter { eq("id", applicationId) }
+                "WORK_IN_PROGRESS" -> {
+                    // Normal flow - initiate completion
+                    if (workSession.workStartTime == null) {
+                        return Result.failure(Exception("Work has not been started yet"))
+                    }
+
+                    // Generate completion OTP
+                    val completionOtp = (100000..999999).random().toString()
+                    val completionOtpExpiry = Instant.now().plus(Duration.ofMinutes(30)).toString()
+
+                    Log.d(TAG, "🚀 Generated completion OTP: $completionOtp")
+
+                    // Calculate work duration
+                    val workStartTime = Instant.parse(workSession.workStartTime)
+                    val workEndTime = Instant.now()
+                    val workDurationMinutes = Duration.between(workStartTime, workEndTime).toMinutes().toInt()
+
+                    Log.d(TAG, "🚀 Work duration: $workDurationMinutes minutes")
+
+                    // Update work session
+                    val workSessionUpdate = mapOf(
+                        "completion_otp" to completionOtp,
+                        "completion_otp_expiry" to completionOtpExpiry,
+                        "work_end_time" to workEndTime.toString(),
+                        "work_duration_minutes" to workDurationMinutes,
+                        "status" to "COMPLETION_PENDING",
+                        "updated_at" to Instant.now().toString()
+                    )
+
+                    supabaseClient.table("work_sessions")
+                        .update(workSessionUpdate) {
+                            filter { eq("id", workSession.id) }
+                        }
+
+                    // Update application status
+                    val applicationUpdate = mapOf(
+                        "status" to "COMPLETION_PENDING",
+                        "updated_at" to Instant.now().toString()
+                    )
+
+                    supabaseClient.table("applications")
+                        .update(applicationUpdate) {
+                            filter { eq("id", applicationId) }
+                        }
+
+                    Log.d(TAG, "✅ Work completion initiated successfully")
+                    return Result.success("Work completion initiated! Share completion code $completionOtp with your employer")
                 }
 
-            Log.d(TAG, "✅ Work completion initiated. OTP: $completionOtp")
+                "WORK_COMPLETED" -> {
+                    return Result.failure(Exception("Work has already been completed"))
+                }
 
-            Result.success("Work completion initiated. Share this OTP with your employer: $completionOtp")
+                "OTP_GENERATED" -> {
+                    return Result.failure(Exception("Work has not been started yet. Please start work first using the OTP"))
+                }
+
+                else -> {
+                    return Result.failure(Exception("Invalid work session state: ${workSession.status}"))
+                }
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error initiating work completion: ${e.message}", e)
-            Result.failure(Exception("Failed to initiate work completion: ${e.message}"))
+            Result.failure(e)
         }
+    }
+
+    // Also add this helper method to get completion OTP for display
+    suspend fun getCompletionOtpForApplication(applicationId: String): Result<String> {
+        return try {
+            val currentUserId = authRepository.getCurrentUserId()
+            if (currentUserId.isNullOrEmpty()) {
+                return Result.failure(Exception("User not authenticated"))
+            }
+
+            val workSessions = supabaseClient.table("work_sessions")
+                .select {
+                    filter {
+                        eq("application_id", applicationId)
+                        eq("employee_id", currentUserId)
+                        eq("status", "COMPLETION_PENDING")
+                    }
+                    order("created_at", Order.DESCENDING)
+                    limit(1)
+                }
+                .decodeList<WorkSession>()
+
+            if (workSessions.isEmpty()) {
+                return Result.failure(Exception("No completion pending session found"))
+            }
+
+            val workSession = workSessions.first()
+            val completionOtp = workSession.completionOtp ?: ""
+
+            if (completionOtp.isBlank()) {
+                return Result.failure(Exception("No completion code found"))
+            }
+
+            Result.success(completionOtp)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting completion OTP: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    suspend fun verifyWorkCompletionOtp(applicationId: String, completionOtp: String): Result<String> {
+        return try {
+            Log.d(TAG, "🚀 Verifying completion OTP for application: $applicationId")
+
+            val currentUserId = authRepository.getCurrentUserId()
+            if (currentUserId.isNullOrEmpty()) {
+                return Result.failure(Exception("User not authenticated"))
+            }
+
+            // ✅ CORRECTED: Get application using .table()
+            val applications = supabaseClient.table("applications")
+                .select {
+                    filter {
+                        eq("id", applicationId)
+                    }
+                }
+                .decodeList<Application>()
+
+            if (applications.isEmpty()) {
+                return Result.failure(Exception("Application not found"))
+            }
+
+            val application = applications.first()
+
+            // ✅ CORRECTED: Get job using .table()
+            val jobs = supabaseClient.table("jobs")
+                .select {
+                    filter {
+                        eq("id", application.jobId)
+                    }
+                }
+                .decodeList<Job>()
+
+            if (jobs.isEmpty()) {
+                return Result.failure(Exception("Job not found"))
+            }
+
+            val job = jobs.first()
+
+            // Verify employer owns this job
+            if (job.employerId != currentUserId) {
+                return Result.failure(Exception("Unauthorized: You don't own this job"))
+            }
+
+            // ✅ CORRECTED: Get work session using .table()
+            val workSessions = supabaseClient.table("work_sessions")
+                .select {
+                    filter {
+                        eq("application_id", applicationId)
+                    }
+                }
+                .decodeList<WorkSession>()
+
+            if (workSessions.isEmpty()) {
+                return Result.failure(Exception("No work session found"))
+            }
+
+            val workSession = workSessions.first()
+
+            // Check work session status
+            if (workSession.status != "COMPLETION_PENDING") {
+                return Result.failure(Exception("Work completion is not pending. Current status: ${workSession.status}"))
+            }
+
+            // Verify completion OTP
+            if (workSession.completionOtp != completionOtp) {
+                return Result.failure(Exception("Invalid completion OTP"))
+            }
+
+            // Check if completion OTP is expired
+            val expiryTime = workSession.completionOtpExpiry?.let { Instant.parse(it) }
+            if (expiryTime == null || Instant.now().isAfter(expiryTime)) {
+                return Result.failure(Exception("Completion OTP has expired"))
+            }
+
+            // Calculate wages based on work duration
+            val workDurationMinutes = workSession.workDurationMinutes ?: 0
+            val hourlyRate = extractHourlyRate(job.salaryRange)
+            val totalWages = calculateWages(workDurationMinutes, hourlyRate)
+
+            Log.d(TAG, "🚀 Calculated wages: ₹$totalWages for $workDurationMinutes minutes at ₹$hourlyRate/hour")
+
+            // Update work session as completed
+            val workSessionCompletionUpdate = buildJsonObject {
+                put("completion_otp_used_at", Instant.now().toString())
+                put("status", "WORK_COMPLETED")
+                put("hourly_rate_used", hourlyRate)
+                put("total_wages_calculated", totalWages)
+                put("updated_at", Instant.now().toString())
+            }
+
+            supabaseClient.table("work_sessions")
+                .update(workSessionCompletionUpdate) {
+                    filter {
+                        eq("application_id", applicationId)
+                    }
+                }
+
+            // Update application status to COMPLETED
+            val applicationCompletionUpdate = buildJsonObject {
+                put("status", "COMPLETED")
+                put("updated_at", Instant.now().toString())
+            }
+
+            supabaseClient.table("applications")
+                .update(applicationCompletionUpdate) {
+                    filter {
+                        eq("id", applicationId)
+                    }
+                }
+
+            Log.d(TAG, "✅ Work completion verified and finalized")
+
+            Result.success("Work completed successfully! Wages: ₹$totalWages")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error verifying completion OTP: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    // ALTERNATIVE: If buildJsonObject causes issues, use Map version
+    suspend fun initiateWorkCompletionWithMap(applicationId: String): Result<String> {
+        return try {
+            Log.d(TAG, "🚀 Starting work completion for application: $applicationId")
+
+            val currentUserId = authRepository.getCurrentUserId()
+            if (currentUserId.isNullOrEmpty()) {
+                return Result.failure(Exception("User not authenticated"))
+            }
+
+            // Get application using .table()
+            val applications = supabaseClient
+                .table("applications")
+                .select {
+                    filter {
+                        eq("id", applicationId)
+                        eq("employee_id", currentUserId)
+                    }
+                }
+                .decodeList<Application>()
+
+            if (applications.isEmpty()) {
+                return Result.failure(Exception("Application not found"))
+            }
+
+            val application = applications.first()
+
+            if (application.status != "WORK_IN_PROGRESS") {
+                return Result.failure(Exception("Work is not in progress for this application"))
+            }
+
+            // Get work session using .table()
+            val workSessions = supabaseClient.table("work_sessions")
+                .select {
+                    filter {
+                        eq("application_id", applicationId)
+                    }
+                }
+                .decodeList<WorkSession>()
+
+            if (workSessions.isEmpty()) {
+                return Result.failure(Exception("No active work session found"))
+            }
+
+            val workSession = workSessions.first()
+
+            if (workSession.workStartTime == null) {
+                return Result.failure(Exception("Work has not been started yet"))
+            }
+
+            // Generate completion OTP
+            val completionOtp = (100000..999999).random().toString()
+            val completionOtpExpiry = Instant.now().plus(Duration.ofMinutes(30)).toString()
+
+            Log.d(TAG, "🚀 Generated completion OTP: $completionOtp")
+
+            // Calculate work duration
+            val workStartTime = Instant.parse(workSession.workStartTime)
+            val workEndTime = Instant.now()
+            val workDurationMinutes = Duration.between(workStartTime, workEndTime).toMinutes().toInt()
+
+            Log.d(TAG, "🚀 Work duration: $workDurationMinutes minutes")
+
+            // Update work session using Map
+            val workSessionUpdate = mapOf(
+                "completion_otp" to completionOtp,
+                "completion_otp_expiry" to completionOtpExpiry,
+                "work_end_time" to workEndTime.toString(),
+                "work_duration_minutes" to workDurationMinutes,
+                "status" to "COMPLETION_PENDING",
+                "updated_at" to Instant.now().toString()
+            )
+
+            supabaseClient
+                .table("work_sessions")
+                .update(workSessionUpdate) {
+                    filter {
+                        eq("application_id", applicationId)
+                    }
+                }
+
+            // Update application status using Map
+            val applicationUpdate = mapOf(
+                "status" to "COMPLETION_PENDING",
+                "updated_at" to Instant.now().toString()
+            )
+
+            supabaseClient.table("applications")
+                .update(applicationUpdate) {
+                    filter {
+                        eq("id", applicationId)
+                    }
+                }
+
+            Log.d(TAG, "✅ Work completion initiated successfully")
+
+            Result.success("Work completion initiated! Share OTP $completionOtp with your employer")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error initiating work completion: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+
+
+    // 🚀 Helper method to extract hourly rate from salary range
+    private fun extractHourlyRate(salaryRange: String?): Double {
+        return try {
+            if (salaryRange.isNullOrBlank()) return 50.0 // Default rate
+
+            // Handle various salary formats: "₹100-200/hour", "100-200", "₹150/hour", etc.
+            val cleanRange = salaryRange.replace("₹", "").replace(",", "")
+
+            when {
+                cleanRange.contains("/hour") -> {
+                    val hourlyPart = cleanRange.split("/hour")[0]
+                    if (hourlyPart.contains("-")) {
+                        // Range like "100-200/hour" - take average
+                        val parts = hourlyPart.split("-")
+                        val min = parts[0].trim().toDoubleOrNull() ?: 50.0
+                        val max = parts[1].trim().toDoubleOrNull() ?: min
+                        (min + max) / 2.0
+                    } else {
+                        // Single rate like "150/hour"
+                        hourlyPart.trim().toDoubleOrNull() ?: 50.0
+                    }
+                }
+                cleanRange.contains("/day") -> {
+                    // Daily rate - assume 8 hours per day
+                    val dailyPart = cleanRange.split("/day")[0]
+                    val dailyRate = if (dailyPart.contains("-")) {
+                        val parts = dailyPart.split("-")
+                        val min = parts[0].trim().toDoubleOrNull() ?: 400.0
+                        val max = parts[1].trim().toDoubleOrNull() ?: min
+                        (min + max) / 2.0
+                    } else {
+                        dailyPart.trim().toDoubleOrNull() ?: 400.0
+                    }
+                    dailyRate / 8.0 // Convert to hourly
+                }
+                cleanRange.contains("-") -> {
+                    // Range without time unit - assume hourly
+                    val parts = cleanRange.split("-")
+                    val min = parts[0].trim().toDoubleOrNull() ?: 50.0
+                    val max = parts[1].trim().toDoubleOrNull() ?: min
+                    (min + max) / 2.0
+                }
+                else -> {
+                    // Single number - assume hourly
+                    cleanRange.trim().toDoubleOrNull() ?: 50.0
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not parse salary range: $salaryRange, using default rate")
+            50.0 // Default hourly rate
+        }
+    }
+
+
+    // 🚀 Helper method to calculate total wages
+    private fun calculateWages(workDurationMinutes: Int, hourlyRate: Double): Double {
+        val workHours = workDurationMinutes / 60.0
+        val totalWages = workHours * hourlyRate
+
+        // Round to 2 decimal places
+        return Math.round(totalWages * 100.0) / 100.0
     }
 
     /**
@@ -2178,7 +2504,45 @@ class ApplicationRepository @Inject constructor(
     }
 
     /**
-     * 🚀 NEW: Employer verifies completion OTP and finalizes work with wage calculation
+     * 🚀 NEW: Get work session with completion data
+     */
+    suspend fun getWorkSessionWithCompletion(applicationId: String): Result<WorkSession?> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔍 Getting work session with completion data for: $applicationId")
+
+            val workSession = supabaseClient
+                .table("work_sessions")
+                .select {
+                    filter { eq("application_id", applicationId) }
+                    order("created_at", Order.DESCENDING)
+                    limit(1)
+                }
+                .decodeSingleOrNull<WorkSession>()
+
+            if (workSession != null) {
+                Log.d(TAG, "✅ Found work session: ${workSession.id}")
+                Log.d(TAG, "   Status: ${workSession.status}")
+                if (workSession.status == "COMPLETION_PENDING") {
+                    Log.d(TAG, "   Completion OTP available: ${workSession.completionOtp}")
+                }
+            } else {
+                Log.d(TAG, "ℹ️ No work session found")
+            }
+
+            Result.success(workSession)
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error getting work session: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 🚀 NEW: Get completion OTP for employee display
+     */
+
+
+    /**
+     * 🚀 FIXED: Employer verifies completion OTP and finalizes work with wage calculation
      */
     suspend fun verifyCompletionOtpAndFinalize(
         applicationId: String,
@@ -2193,7 +2557,7 @@ class ApplicationRepository @Inject constructor(
             Log.d(TAG, "Employer ID: $userId")
             Log.d(TAG, "Entered OTP: $enteredOtp")
 
-            // 🚀 Get application and verify employer ownership
+            // Get application and verify employer ownership
             val application = supabaseClient
                 .table("applications")
                 .select {
@@ -2202,7 +2566,7 @@ class ApplicationRepository @Inject constructor(
                 .decodeSingleOrNull<Application>()
                 ?: return@withContext Result.failure(Exception("Application not found"))
 
-            // 🚀 Get job to verify employer ownership
+            // Get job to verify employer ownership
             val job = supabaseClient
                 .table("jobs")
                 .select {
@@ -2215,9 +2579,7 @@ class ApplicationRepository @Inject constructor(
                 return@withContext Result.failure(Exception("Unauthorized - not your job"))
             }
 
-            Log.d(TAG, "✅ Employer ownership verified")
-
-            // 🚀 Get work session with completion OTP
+            // Get work session with completion OTP
             val workSession = supabaseClient
                 .table("work_sessions")
                 .select {
@@ -2231,15 +2593,10 @@ class ApplicationRepository @Inject constructor(
                 .decodeSingleOrNull<WorkSession>()
                 ?: return@withContext Result.failure(Exception("No completion pending session found"))
 
-            // 🚀 Verify completion OTP
+            // Verify completion OTP
             val sessionOtp = workSession.completionOtp ?: ""
             val inputOtp = enteredOtp.trim()
 
-            Log.d(TAG, "🔍 Comparing completion OTPs:")
-            Log.d(TAG, "   Session OTP: '$sessionOtp'")
-            Log.d(TAG, "   Input OTP: '$inputOtp'")
-
-            // 🚀 Enhanced OTP comparison
             val otpMatches = sessionOtp == inputOtp ||
                     sessionOtp.toIntOrNull() == inputOtp.toIntOrNull() ||
                     sessionOtp.padStart(6, '0') == inputOtp.padStart(6, '0')
@@ -2249,12 +2606,10 @@ class ApplicationRepository @Inject constructor(
                 return@withContext Result.failure(Exception("Invalid completion OTP"))
             }
 
-            Log.d(TAG, "✅ Completion OTP verified successfully!")
-
-            // 🚀 Check OTP expiry
+            // Check OTP expiry
             try {
-                if (workSession.otpExpiry.isNotBlank()) {
-                    val expiry = Instant.parse(workSession.otpExpiry)
+                if (!workSession.completionOtpExpiry.isNullOrBlank()) {
+                    val expiry = Instant.parse(workSession.completionOtpExpiry)
                     if (Instant.now().isAfter(expiry)) {
                         return@withContext Result.failure(Exception("Completion OTP has expired"))
                     }
@@ -2263,48 +2618,35 @@ class ApplicationRepository @Inject constructor(
                 Log.w(TAG, "Could not parse expiry, continuing: ${e.message}")
             }
 
-            // 🚀 Calculate wages
+            // Calculate wages
             val durationMinutes = workSession.workDurationMinutes ?: 0
             val hourlyRate = extractHourlyRateFromSalary(job.salaryRange)
             val totalWages = calculateWages(durationMinutes, hourlyRate)
 
-            Log.d(TAG, "💰 Wage calculation:")
-            Log.d(TAG, "   Duration: $durationMinutes minutes")
-            Log.d(TAG, "   Hourly Rate: ₹$hourlyRate")
-            Log.d(TAG, "   Total Wages: ₹$totalWages")
-
             val now = Instant.now().toString()
 
-            // 🚀 CRITICAL FIX: Use specific types for serialization
-            val completedWorkSessionData = mapOf(
-                "status" to "WORK_COMPLETED",
-                "completion_otp_used_at" to now,
-                "total_wages_calculated" to totalWages.toString(),
-                "hourly_rate_used" to hourlyRate.toString(),
-                "updated_at" to now
-            )
-
+            // Update work session to completed
             supabaseClient.table("work_sessions")
-                .update(completedWorkSessionData) {
+                .update(mapOf(
+                    "status" to "WORK_COMPLETED",
+                    "completion_otp_used_at" to now,
+                    "total_wages_calculated" to totalWages.toString(),
+                    "hourly_rate_used" to hourlyRate.toString(),
+                    "updated_at" to now
+                )) {
                     filter { eq("id", workSession.id) }
                 }
 
-            Log.d(TAG, "✅ Work session marked as completed")
-
-            // 🚀 Update application to completed
-            val completedApplicationData = mapOf(
-                "status" to "COMPLETED",
-                "updated_at" to now
-            )
-
+            // Update application to completed
             supabaseClient.table("applications")
-                .update(completedApplicationData) {
+                .update(mapOf(
+                    "status" to "COMPLETED",
+                    "updated_at" to now
+                )) {
                     filter { eq("id", applicationId) }
                 }
 
-            Log.d(TAG, "✅ Application marked as completed")
-
-            // 🚀 Create completion result
+            // Create completion result
             val result = WorkCompletionResult(
                 applicationId = applicationId,
                 employeeId = application.employeeId,
@@ -2318,10 +2660,9 @@ class ApplicationRepository @Inject constructor(
                 completedAt = now
             )
 
-            Log.d(TAG, "🎉 === WORK COMPLETION SUCCESSFUL ===")
-            Log.d(TAG, "💼 Job: ${job.title}")
-            Log.d(TAG, "⏰ Duration: $durationMinutes minutes (${String.format("%.1f", durationMinutes / 60.0)} hours)")
-            Log.d(TAG, "💰 Total Payment: ₹$totalWages")
+            Log.d(TAG, "✅ Work completed successfully")
+            Log.d(TAG, "Duration: $durationMinutes minutes")
+            Log.d(TAG, "Total Wages: ₹$totalWages")
 
             Result.success(result)
 
@@ -2332,15 +2673,15 @@ class ApplicationRepository @Inject constructor(
     }
 
 
+
     /**
-     * Generate a 6-digit random OTP
+     * 🚀 Enhanced OTP generation
      */
     private fun generateOtp(): String {
         val otp = (100000..999999).random().toString()
         Log.d(TAG, "🎲 Generated OTP: $otp")
         return otp
     }
-
     // Helper functions for wage calculation
     private fun extractHourlyRateFromSalary(salaryRange: String?): Double {
         if (salaryRange.isNullOrBlank()) return 50.0 // Default rate
@@ -2362,13 +2703,7 @@ class ApplicationRepository @Inject constructor(
         }
     }
 
-    private fun calculateWages(durationMinutes: Int, hourlyRate: Double): Double {
-        val hours = durationMinutes / 60.0
-        return hours * hourlyRate
-    }
-
-
-    // 🚀 Data class for work completion result
+      // 🚀 Data class for work completion result
     @Serializable
     data class WorkCompletionResult(
         val applicationId: String,

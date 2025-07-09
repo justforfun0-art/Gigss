@@ -22,12 +22,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Update
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.WorkOutline
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -36,6 +41,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -296,9 +302,7 @@ fun AllApplicationsScreen(
     }
 }
 
-// Update your ApplicationItem composable with OTP functionality
-
-// Update your ApplicationItem composable with OTP functionality
+// Fixed ApplicationItem in JobApplicationsScreen.kt - Consistent Status Display
 
 @Composable
 fun ApplicationItem(
@@ -308,14 +312,20 @@ fun ApplicationItem(
     onUpdateStatus: (String) -> Unit
 ) {
     var showStatusDialog by remember { mutableStateOf(false) }
-    // 🚀 CRITICAL FIX: Use local state for OTP dialog instead of ViewModel state
     var showOtpDialog by remember { mutableStateOf(false) }
+    var showCompletionDialog by remember { mutableStateOf(false) }
+    var completionOtpInput by remember { mutableStateOf("") }
+    var isVerifyingCompletion by remember { mutableStateOf(false) }
+    var completionError by remember { mutableStateOf<String?>(null) }
 
     // 🚀 FIX: Use application-specific OTP data
     val applicationOtps by viewModel.applicationOtps.collectAsState()
     val applicationWorkSessions by viewModel.applicationWorkSessions.collectAsState()
     val applicationLoadingStates by viewModel.applicationLoadingStates.collectAsState()
     val applicationErrors by viewModel.applicationOtpErrors.collectAsState()
+
+    val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Get data for this specific application
     val currentOtp = remember(applicationOtps, application.id) {
@@ -338,15 +348,16 @@ fun ApplicationItem(
         applicationErrors[application.id]
     }
 
-    // Load work session only when needed
+    // Load work session for all relevant statuses
     LaunchedEffect(application.id) {
-        if (application.status == ApplicationStatus.SELECTED && currentWorkSession == null) {
+        if (application.status in listOf(
+                ApplicationStatus.SELECTED,
+                ApplicationStatus.WORK_IN_PROGRESS,
+                ApplicationStatus.COMPLETION_PENDING
+            ) && currentWorkSession == null) {
             viewModel.getWorkSessionForApplication(application.id)
         }
     }
-
-    // 🚀 CRITICAL FIX: Remove automatic dialog triggering based on OTP changes
-    // LaunchedEffect(currentOtp) - REMOVED to prevent auto-popup
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -394,14 +405,17 @@ fun ApplicationItem(
                     }
                 }
 
-                // Status chip
+                // 🚀 FIXED: Status chip with consistent enum-based mapping
                 val (statusColor, statusText) = when (application.status) {
                     ApplicationStatus.APPLIED -> Pair(MaterialTheme.colorScheme.primary, "APPLIED")
                     ApplicationStatus.SELECTED -> Pair(MaterialTheme.colorScheme.secondary, "SELECTED")
-                    ApplicationStatus.REJECTED -> Pair(MaterialTheme.colorScheme.error, "REJECTED")
+                    ApplicationStatus.ACCEPTED -> Pair(MaterialTheme.colorScheme.tertiary, "ACCEPTED")
                     ApplicationStatus.WORK_IN_PROGRESS -> Pair(Color(0xFF009688), "WORKING")
+                    ApplicationStatus.COMPLETION_PENDING -> Pair(Color(0xFFFF9800), "VERIFY COMPLETION")
                     ApplicationStatus.COMPLETED -> Pair(Color(0xFF4CAF50), "COMPLETED")
-                    else -> Pair(MaterialTheme.colorScheme.outline, application.status.toString())
+                    ApplicationStatus.REJECTED -> Pair(MaterialTheme.colorScheme.error, "REJECTED")
+                    ApplicationStatus.DECLINED -> Pair(MaterialTheme.colorScheme.error, "DECLINED")
+                    ApplicationStatus.NOT_INTERESTED -> Pair(MaterialTheme.colorScheme.outline, "NOT INTERESTED")
                 }
 
                 Box(
@@ -421,176 +435,360 @@ fun ApplicationItem(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // First row: Profile, Job, Change Status
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                TextButton(
-                    onClick = onViewProfile,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Profile", style = MaterialTheme.typography.bodySmall)
-                }
+            // 🚀 UPDATED: Status-based action buttons
+            when (application.status) {
+                ApplicationStatus.SELECTED -> {
+                    // Existing SELECTED logic...
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        TextButton(
+                            onClick = onViewProfile,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Profile", style = MaterialTheme.typography.bodySmall)
+                        }
 
-                TextButton(
-                    onClick = { /* Navigate to job details */ },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.WorkOutline,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Job", style = MaterialTheme.typography.bodySmall)
-                }
+                        TextButton(
+                            onClick = { /* Navigate to job details */ },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.WorkOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Job", style = MaterialTheme.typography.bodySmall)
+                        }
 
-                TextButton(
-                    onClick = { showStatusDialog = true },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Update,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Change Status", style = MaterialTheme.typography.bodySmall)
-                }
-            }
+                        TextButton(
+                            onClick = { showStatusDialog = true },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Update, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Change Status", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
 
-            // Second row: Generate OTP (only for SELECTED status)
-            if (application.status == ApplicationStatus.SELECTED) {
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
-                ) {
+                    // OTP Generation Section
+                    Spacer(modifier = Modifier.height(8.dp))
                     if (currentOtp != null) {
                         TextButton(
-                            onClick = {
-                                Log.d("ApplicationItem", "📱 View OTP clicked for ${application.id}")
-                                showOtpDialog = true // 🚀 Use local state
-                            },
+                            onClick = { showOtpDialog = true },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Security,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.secondary
-                            )
+                            Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.secondary)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "View OTP",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium
-                            )
+                            Text("View OTP", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                         }
                     } else {
                         TextButton(
-                            onClick = {
-                                Log.d("ApplicationItem", "🚀 Generate OTP clicked for ${application.id}")
-                                // 🚀 FIXED: Generate OTP without auto-showing dialog
-                                viewModel.generateOtpSilently(application.id)
-                            },
+                            onClick = { viewModel.generateOtpSilently(application.id) },
                             enabled = !isCurrentlyLoading,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             if (isCurrentlyLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp
-                                )
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Generating...")
                             } else {
-                                Icon(
-                                    imageVector = Icons.Default.Security,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
+                                Text("Generate OTP", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+
+                    // OTP Display when available
+                    if (currentOtp != null && currentWorkSession != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Work Session OTP", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Generate OTP",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
+                                    text = currentOtp,
+                                    style = MaterialTheme.typography.headlineMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        letterSpacing = 4.sp
+                                    )
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Expires in 30 minutes", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ApplicationStatus.WORK_IN_PROGRESS -> {
+                    // 🚀 FIXED: Show work in progress status
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        TextButton(
+                            onClick = onViewProfile,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Profile", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        TextButton(
+                            onClick = { /* Navigate to job details */ },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.WorkOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Job", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        TextButton(
+                            onClick = {},
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF009688))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Working", style = MaterialTheme.typography.bodySmall, color = Color(0xFF009688))
+                        }
+                    }
+
+                    // Show work progress info
+                    currentWorkSession?.let { session ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF009688).copy(alpha = 0.1f))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "Work in Progress",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF009688)
+                                )
+                                session.workStartTime?.let { startTime ->
+                                    Text(
+                                        text = "Started: ${DateUtils.formatDate(startTime)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = "Employee is currently working on this job",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
                     }
                 }
-            }
 
-            // Third row: OTP display when generated (inline display)
-            if (application.status == ApplicationStatus.SELECTED && currentOtp != null && currentWorkSession != null) {
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                ApplicationStatus.COMPLETION_PENDING -> {
+                    // 🚀 COMPLETION VERIFICATION UI
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
+                        TextButton(
+                            onClick = onViewProfile,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Security,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Work Session OTP",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Profile", style = MaterialTheme.typography.bodySmall)
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = currentOtp,
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                letterSpacing = 4.sp
-                            )
-                        )
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
+                        TextButton(
+                            onClick = { /* Navigate to job details */ },
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Timer,
-                                contentDescription = null,
-                                modifier = Modifier.size(12.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Icon(Icons.Default.WorkOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
+                            Text("Job", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        TextButton(
+                            onClick = {
+                                showCompletionDialog = true
+                                completionOtpInput = ""
+                                completionError = null
+                            },
+                            modifier = Modifier.weight(1f),
+                            enabled = !isVerifyingCompletion
+                        ) {
+                            if (isVerifyingCompletion) {
+                                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFFF9800))
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Verify", style = MaterialTheme.typography.bodySmall, color = Color(0xFFFF9800))
+                        }
+                    }
+
+                    // Show completion pending info
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFF9800).copy(alpha = 0.1f))
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.HourglassTop, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFFF9800))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Work Completion Pending Verification",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFFF9800)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Expires in 30 minutes",
+                                text = "Employee has completed work and provided a completion code. Verify the work quality and enter the completion code to finalize payment.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+
+                            // Show work session details if available
+                            currentWorkSession?.let { session ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                session.workDurationMinutes?.let { duration ->
+                                    Text(
+                                        text = "Work Duration: ${session.formattedWorkDuration}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                session.calculatedWages?.let { wages ->
+                                    Text(
+                                        text = "Estimated Payment: ₹${String.format("%.2f", wages)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ApplicationStatus.COMPLETED -> {
+                    // Show completed status
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        TextButton(
+                            onClick = onViewProfile,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Profile", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        TextButton(
+                            onClick = { /* Navigate to job details */ },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.WorkOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Job", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        TextButton(
+                            onClick = {},
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF4CAF50))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Completed", style = MaterialTheme.typography.bodySmall, color = Color(0xFF4CAF50))
+                        }
+                    }
+
+                    // Show completion summary
+                    currentWorkSession?.let { session ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF4CAF50).copy(alpha = 0.1f))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "Work Completed Successfully",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF4CAF50)
+                                )
+                                session.workDurationMinutes?.let { duration ->
+                                    Text(
+                                        text = "Duration: ${session.formattedWorkDuration}",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                session.totalWagesCalculated?.let { wages ->
+                                    Text(
+                                        text = "Total Payment: ₹$wages",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                else -> {
+                    // Default action buttons for other statuses
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        TextButton(
+                            onClick = onViewProfile,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Profile", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        TextButton(
+                            onClick = { /* Navigate to job details */ },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.WorkOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Job", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        TextButton(
+                            onClick = { showStatusDialog = true },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Update, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Update", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -604,6 +802,27 @@ fun ApplicationItem(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
+            }
+
+            // Show completion verification error
+            completionError?.let { error ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
             }
         }
     }
@@ -644,7 +863,6 @@ fun ApplicationItem(
                         onSelect = {
                             onUpdateStatus("SELECTED")
                             showStatusDialog = false
-                            // 🚀 FIXED: Generate OTP silently after selecting
                             viewModel.generateOtpSilently(application.id)
                         }
                     )
@@ -677,22 +895,173 @@ fun ApplicationItem(
         }
     }
 
-    // 🚀 FIXED: OTP Display Dialog - only shows when explicitly requested
+    // OTP Display Dialog - only shows when explicitly requested
     if (showOtpDialog && currentOtp != null) {
         OtpDisplayDialog(
             otp = currentOtp,
             employeeName = "Applicant ${application.employeeId.takeLast(5)}",
             jobTitle = application.job.title,
             expiryTime = currentWorkSession?.otpExpiry,
-            onDismiss = {
-                showOtpDialog = false // 🚀 Use local state
-            },
+            onDismiss = { showOtpDialog = false },
             onRegenerateOtp = {
-                showOtpDialog = false // 🚀 Use local state
+                showOtpDialog = false
                 viewModel.generateOtpSilently(application.id)
             }
         )
     }
+
+    // 🚀 NEW: Work Completion Verification Dialog
+    if (showCompletionDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isVerifyingCompletion) {
+                    showCompletionDialog = false
+                    completionOtpInput = ""
+                    completionError = null
+                }
+            },
+            title = { Text("Verify Work Completion") },
+            text = {
+                Column {
+                    Text(
+                        text = "Employee ${application.employeeId.takeLast(5)} has completed work for: ${application.job.title}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    OutlinedTextField(
+                        value = completionOtpInput,
+                        onValueChange = { input ->
+                            if (input.length <= 6 && input.all { it.isDigit() }) {
+                                completionOtpInput = input
+                                completionError = null
+                            }
+                        },
+                        label = { Text("Enter 6-digit completion code") },
+                        placeholder = { Text("123456") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        isError = completionError != null,
+                        enabled = !isVerifyingCompletion
+                    )
+
+                    completionError?.let { error ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Text(
+                            text = "Ask the employee for the 6-digit completion code they received after finishing work.",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+
+                    // Show work details if available
+                    currentWorkSession?.let { session ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text(
+                                    text = "Work Summary:",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                session.workDurationMinutes?.let { duration ->
+                                    Text(
+                                        text = "Duration: ${session.formattedWorkDuration}",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                session.calculatedWages?.let { wages ->
+                                    Text(
+                                        text = "Estimated Payment: ₹${String.format("%.2f", wages)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (completionOtpInput.length == 6) {
+                            isVerifyingCompletion = true
+                            completionError = null
+
+                            coroutineScope.launch {
+                                try {
+                                    val result = viewModel.verifyWorkCompletionOtp(application.id, completionOtpInput)
+
+                                    if (result.isSuccess) {
+                                        val message = result.getOrNull() ?: "Work completed successfully!"
+                                        snackbarHostState.showSnackbar(message)
+                                        showCompletionDialog = false
+                                        // Refresh the applications list
+                                    } else {
+                                        completionError = result.exceptionOrNull()?.message ?: "Verification failed"
+                                    }
+                                } catch (e: Exception) {
+                                    completionError = "Error: ${e.message}"
+                                } finally {
+                                    isVerifyingCompletion = false
+                                }
+                            }
+                        }
+                    },
+                    enabled = completionOtpInput.length == 6 && !isVerifyingCompletion
+                ) {
+                    if (isVerifyingCompletion) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Verifying...")
+                    } else {
+                        Text("Verify & Complete")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        if (!isVerifyingCompletion) {
+                            showCompletionDialog = false
+                            completionOtpInput = ""
+                            completionError = null
+                        }
+                    },
+                    enabled = !isVerifyingCompletion
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Add SnackbarHost for completion messages
+    SnackbarHost(hostState = snackbarHostState)
 }
 /**
  * Status option component for employer application updates
@@ -782,6 +1151,7 @@ fun EmployerApplicationStatusOption(
 // 🚀 COMPLETE FIXED VERSION: Replace your ApplicationItemWithJob composable
 
 // Replace your existing ApplicationItemWithJob with this updated version
+// Fixed ApplicationItemWithJob in JobApplicationsScreen.kt - Consistent Status Display
 
 @Composable
 fun ApplicationItemWithJob(
@@ -792,10 +1162,9 @@ fun ApplicationItemWithJob(
     onUpdateStatus: (String) -> Unit
 ) {
     var showStatusDialog by remember { mutableStateOf(false) }
-    // 🚀 CRITICAL FIX: Use local state for dialog control
     var showOtpDialog by remember { mutableStateOf(false) }
 
-    // 🚀 FIX: Use application-specific OTP data
+    // Use application-specific OTP data
     val applicationOtps by viewModel.applicationOtps.collectAsState()
     val applicationWorkSessions by viewModel.applicationWorkSessions.collectAsState()
     val applicationLoadingStates by viewModel.applicationLoadingStates.collectAsState()
@@ -821,9 +1190,6 @@ fun ApplicationItemWithJob(
             viewModel.getWorkSessionForApplication(application.id)
         }
     }
-
-    // 🚀 CRITICAL FIX: Remove automatic dialog triggering
-    // LaunchedEffect(currentOtp) - REMOVED to prevent auto-popup
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -871,17 +1237,17 @@ fun ApplicationItemWithJob(
                     }
                 }
 
-                // Status chip with work-related statuses
-                val (statusColor, statusText) = when (application.status.toString().uppercase(Locale.ROOT)) {
-                    "APPLIED" -> Pair(MaterialTheme.colorScheme.primary, "APPLIED")
-                    "REVIEWING", "UNDER_REVIEW" -> Pair(MaterialTheme.colorScheme.tertiary, "REVIEWING")
-                    "SHORTLISTED" -> Pair(MaterialTheme.colorScheme.tertiary, "SHORTLISTED")
-                    "INTERVIEW", "INTERVIEW_SCHEDULED" -> Pair(MaterialTheme.colorScheme.tertiary, "INTERVIEW")
-                    "REJECTED", "DECLINED" -> Pair(MaterialTheme.colorScheme.error, "REJECTED")
-                    "HIRED", "ACCEPTED", "SELECTED" -> Pair(MaterialTheme.colorScheme.secondary, "HIRED")
-                    "WORK_IN_PROGRESS" -> Pair(Color(0xFF009688), "WORKING")
-                    "COMPLETED" -> Pair(Color(0xFF4CAF50), "COMPLETED")
-                    else -> Pair(MaterialTheme.colorScheme.outline, "PENDING")
+                // 🚀 FIXED: Status chip with consistent enum-based mapping instead of string-based
+                val (statusColor, statusText) = when (application.status) {
+                    ApplicationStatus.APPLIED -> Pair(MaterialTheme.colorScheme.primary, "APPLIED")
+                    ApplicationStatus.SELECTED -> Pair(MaterialTheme.colorScheme.secondary, "SELECTED")
+                    ApplicationStatus.ACCEPTED -> Pair(MaterialTheme.colorScheme.tertiary, "ACCEPTED")
+                    ApplicationStatus.WORK_IN_PROGRESS -> Pair(Color(0xFF009688), "WORKING")
+                    ApplicationStatus.COMPLETION_PENDING -> Pair(Color(0xFFFF9800), "VERIFY COMPLETION")
+                    ApplicationStatus.COMPLETED -> Pair(Color(0xFF4CAF50), "COMPLETED")
+                    ApplicationStatus.REJECTED -> Pair(MaterialTheme.colorScheme.error, "REJECTED")
+                    ApplicationStatus.DECLINED -> Pair(MaterialTheme.colorScheme.error, "DECLINED")
+                    ApplicationStatus.NOT_INTERESTED -> Pair(MaterialTheme.colorScheme.outline, "NOT INTERESTED")
                 }
 
                 Box(
@@ -926,60 +1292,35 @@ fun ApplicationItemWithJob(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 TextButton(onClick = onViewProfile) {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Profile", style = MaterialTheme.typography.bodySmall)
                 }
 
                 TextButton(onClick = onViewJob) {
-                    Icon(
-                        imageVector = Icons.Default.WorkOutline,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Icon(Icons.Default.WorkOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Job", style = MaterialTheme.typography.bodySmall)
                 }
 
-                // OTP or Update button based on status
+                // 🚀 FIXED: Status-specific action buttons
                 when (application.status) {
                     ApplicationStatus.SELECTED -> {
                         if (currentOtp != null) {
-                            TextButton(onClick = {
-                                showOtpDialog = true // 🚀 Use local state
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Default.Security,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.secondary
-                                )
+                            TextButton(onClick = { showOtpDialog = true }) {
+                                Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("OTP", style = MaterialTheme.typography.bodySmall)
                             }
                         } else {
                             TextButton(
-                                onClick = {
-                                    // 🚀 FIXED: Generate OTP without auto-showing dialog
-                                    viewModel.generateOtpSilently(application.id)
-                                },
+                                onClick = { viewModel.generateOtpSilently(application.id) },
                                 enabled = !isCurrentlyLoading
                             ) {
                                 if (isCurrentlyLoading) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(14.dp),
-                                        strokeWidth = 2.dp
-                                    )
+                                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                                 } else {
-                                    Icon(
-                                        imageVector = Icons.Default.Refresh,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                 }
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Gen OTP", style = MaterialTheme.typography.bodySmall)
@@ -988,35 +1329,28 @@ fun ApplicationItemWithJob(
                     }
                     ApplicationStatus.WORK_IN_PROGRESS -> {
                         TextButton(onClick = {}) {
-                            Icon(
-                                imageVector = Icons.Default.Timer,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = Color(0xFF009688)
-                            )
+                            Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF009688))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Working", style = MaterialTheme.typography.bodySmall)
+                            Text("Working", style = MaterialTheme.typography.bodySmall, color = Color(0xFF009688))
+                        }
+                    }
+                    ApplicationStatus.COMPLETION_PENDING -> {
+                        TextButton(onClick = {}) {
+                            Icon(Icons.Default.HourglassTop, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFFF9800))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Verify", style = MaterialTheme.typography.bodySmall, color = Color(0xFFFF9800))
                         }
                     }
                     ApplicationStatus.COMPLETED -> {
                         TextButton(onClick = {}) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = Color(0xFF4CAF50)
-                            )
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF4CAF50))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Done", style = MaterialTheme.typography.bodySmall)
+                            Text("Done", style = MaterialTheme.typography.bodySmall, color = Color(0xFF4CAF50))
                         }
                     }
                     else -> {
                         TextButton(onClick = { showStatusDialog = true }) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Update", style = MaterialTheme.typography.bodySmall)
                         }
@@ -1095,7 +1429,6 @@ fun ApplicationItemWithJob(
                         onSelect = {
                             onUpdateStatus("HIRED")
                             showStatusDialog = false
-                            // 🚀 FIXED: After updating to HIRED, generate OTP silently
                             viewModel.generateOtpSilently(application.id)
                         }
                     )
@@ -1125,18 +1458,16 @@ fun ApplicationItemWithJob(
         }
     }
 
-    // 🚀 FIXED: OTP Display Dialog - only shows when explicitly requested
+    // OTP Display Dialog - only shows when explicitly requested
     if (showOtpDialog && currentOtp != null) {
         OtpDisplayDialog(
             otp = currentOtp,
             employeeName = "Applicant ${application.employeeId.takeLast(5)}",
             jobTitle = application.job.title,
             expiryTime = currentWorkSession?.otpExpiry,
-            onDismiss = {
-                showOtpDialog = false // 🚀 Use local state
-            },
+            onDismiss = { showOtpDialog = false },
             onRegenerateOtp = {
-                showOtpDialog = false // 🚀 Use local state
+                showOtpDialog = false
                 viewModel.generateOtpSilently(application.id)
             }
         )

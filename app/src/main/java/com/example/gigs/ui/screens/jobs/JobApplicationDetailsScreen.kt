@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Refresh
@@ -249,12 +250,15 @@ fun JobApplicationDetailsScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
+                                    // FIXED: Icon when expression with COMPLETION_PENDING added
+
                                     Icon(
                                         imageVector = when (status) {
                                             ApplicationStatus.APPLIED -> Icons.Default.Send
                                             ApplicationStatus.SELECTED -> Icons.Default.CheckCircle
                                             ApplicationStatus.ACCEPTED -> Icons.Default.Schedule
                                             ApplicationStatus.WORK_IN_PROGRESS -> Icons.Default.Timer
+                                            ApplicationStatus.COMPLETION_PENDING -> Icons.Default.HourglassTop  // 🚀 ADDED: Hourglass for pending verification
                                             ApplicationStatus.COMPLETED -> Icons.Default.CheckCircle
                                             ApplicationStatus.REJECTED -> Icons.Default.Cancel
                                             ApplicationStatus.DECLINED -> Icons.Default.ThumbDown
@@ -264,6 +268,8 @@ fun JobApplicationDetailsScreen(
                                         tint = when (status) {
                                             ApplicationStatus.REJECTED, ApplicationStatus.DECLINED, ApplicationStatus.NOT_INTERESTED ->
                                                 MaterialTheme.colorScheme.onErrorContainer
+                                            ApplicationStatus.COMPLETION_PENDING ->
+                                                MaterialTheme.colorScheme.secondary  // 🚀 ADDED: Use secondary color for pending status
                                             else -> MaterialTheme.colorScheme.primary
                                         }
                                     )

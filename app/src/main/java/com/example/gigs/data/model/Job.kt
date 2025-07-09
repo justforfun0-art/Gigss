@@ -33,7 +33,8 @@ enum class ApplicationStatus {
     APPLIED,              // Employee applied for the job
     SELECTED,             // Employer selected employee for the job
     ACCEPTED,             // Employee accepted the job offer (committed to show up)
-    WORK_IN_PROGRESS,     // Employee started work (after OTP verification)
+    WORK_IN_PROGRESS,     // Employee started work
+    COMPLETION_PENDING,   // 🚀 NEW: Employee initiated completion, waiting for employer verification
     COMPLETED,            // Work successfully completed
     REJECTED,             // Employer rejected the application
     NOT_INTERESTED,       // User marked as not interested (handled separately from main flow)
@@ -55,6 +56,7 @@ fun ApplicationStatus.isActive(): Boolean {
         ApplicationStatus.APPLIED,
         ApplicationStatus.SELECTED,
         ApplicationStatus.ACCEPTED,
+        ApplicationStatus.COMPLETION_PENDING,
         ApplicationStatus.WORK_IN_PROGRESS
     )
 }
@@ -63,7 +65,7 @@ fun ApplicationStatus.isActive(): Boolean {
  * Check if this is an active work status
  */
 fun ApplicationStatus.isActiveWork(): Boolean {
-    return this in listOf(ApplicationStatus.SELECTED, ApplicationStatus.ACCEPTED, ApplicationStatus.WORK_IN_PROGRESS)
+    return this in listOf(ApplicationStatus.SELECTED, ApplicationStatus.ACCEPTED, ApplicationStatus.WORK_IN_PROGRESS,ApplicationStatus.COMPLETION_PENDING)
 }
 
 /**
@@ -112,6 +114,7 @@ fun ApplicationStatus.getDisplayText(): String {
         ApplicationStatus.COMPLETED -> "Completed"
         ApplicationStatus.REJECTED -> "Rejected"
         ApplicationStatus.NOT_INTERESTED -> "Not Interested"
+        ApplicationStatus.COMPLETION_PENDING -> "Completion Pending"  // 🚀 Added
         ApplicationStatus.DECLINED -> "Declined"
     }
 }
@@ -124,6 +127,7 @@ fun ApplicationStatus.getNextPossibleStatuses(): List<ApplicationStatus> {
         ApplicationStatus.APPLIED -> listOf(ApplicationStatus.SELECTED, ApplicationStatus.REJECTED, ApplicationStatus.NOT_INTERESTED)
         ApplicationStatus.SELECTED -> listOf(ApplicationStatus.ACCEPTED, ApplicationStatus.DECLINED)
         ApplicationStatus.ACCEPTED -> listOf(ApplicationStatus.WORK_IN_PROGRESS, ApplicationStatus.DECLINED)
+        ApplicationStatus.COMPLETION_PENDING -> listOf(ApplicationStatus.COMPLETED)  // 🚀 Added
         ApplicationStatus.WORK_IN_PROGRESS -> listOf(ApplicationStatus.COMPLETED)
         ApplicationStatus.COMPLETED -> emptyList() // Terminal status
         ApplicationStatus.REJECTED -> emptyList() // Terminal status
@@ -177,6 +181,7 @@ fun ApplicationStatus.getDisplayTextWithJob(jobName: String): String {
         ApplicationStatus.COMPLETED -> "You have successfully completed the assigned job: $jobName"
         ApplicationStatus.REJECTED -> "You are rejected for the job: $jobName"
         ApplicationStatus.NOT_INTERESTED -> "You marked this job as not interested: $jobName"
+        ApplicationStatus.COMPLETION_PENDING -> "Work completion pending employer verification for: $jobName"  // 🚀 Added
         ApplicationStatus.DECLINED -> "You rejected the job: $jobName after being selected"
     }
 }
@@ -353,7 +358,6 @@ data class Application(
 
 // 🚀 SIMPLE FIX: Replace your WorkSession data class in Job.kt with this version
 // 🚀 UPDATED WorkSession.kt - Replace existing WorkSession in Job.kt with this version
-
 @Serializable
 data class WorkSession(
     val id: String = "",
@@ -399,8 +403,8 @@ data class WorkSession(
     @SerialName("total_wages_calculated")
     val totalWagesCalculated: String? = null,
 
-    // Status tracking - Updated to include COMPLETION_PENDING
-    val status: String = "OTP_GENERATED", // OTP_GENERATED, WORK_STARTED, COMPLETION_PENDING, WORK_COMPLETED
+    // Status tracking - Updated to use WORK_IN_PROGRESS instead of WORK_STARTED
+    val status: String = "OTP_GENERATED", // OTP_GENERATED, WORK_IN_PROGRESS, COMPLETION_PENDING, WORK_COMPLETED
     @SerialName("created_at")
     val createdAt: String? = null,
     @SerialName("updated_at")
@@ -427,7 +431,7 @@ data class WorkSession(
 
     // 🚀 Helper properties for UI
     val isWorkStarted: Boolean
-        get() = status in listOf("WORK_STARTED", "COMPLETION_PENDING", "WORK_COMPLETED")
+        get() = status in listOf("WORK_IN_PROGRESS", "COMPLETION_PENDING", "WORK_COMPLETED")
 
     val isCompletionPending: Boolean
         get() = status == "COMPLETION_PENDING"

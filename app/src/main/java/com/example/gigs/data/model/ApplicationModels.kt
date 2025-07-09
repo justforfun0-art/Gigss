@@ -188,18 +188,6 @@ class ApplicationModels {
             )
         }
 
-        // 🚀 NEW: Get status priority for sorting (higher number = higher priority)
-        fun getStatusPriority(status: ApplicationStatus): Int {
-            return when (status) {
-                ApplicationStatus.WORK_IN_PROGRESS -> 5  // Highest priority
-                ApplicationStatus.ACCEPTED -> 4
-                ApplicationStatus.SELECTED -> 3
-                ApplicationStatus.APPLIED -> 2
-                ApplicationStatus.COMPLETED -> 1
-                ApplicationStatus.REJECTED, ApplicationStatus.DECLINED, ApplicationStatus.NOT_INTERESTED -> 0
-            }
-        }
-
         // 🚀 NEW: Check if status can be displayed in job history
         fun shouldShowInHistory(status: ApplicationStatus): Boolean {
             // All statuses should be shown in history
@@ -217,12 +205,27 @@ class ApplicationModels {
         }
 
         // 🚀 NEW: Get status category for filtering
+        // FIXED: Status functions with COMPLETION_PENDING added
+
+        fun getStatusPriority(status: ApplicationStatus): Int {
+            return when (status) {
+                ApplicationStatus.WORK_IN_PROGRESS -> 6  // Highest priority (currently working)
+                ApplicationStatus.COMPLETION_PENDING -> 5  // 🚀 ADDED: High priority (waiting for verification)
+                ApplicationStatus.ACCEPTED -> 4
+                ApplicationStatus.SELECTED -> 3
+                ApplicationStatus.APPLIED -> 2
+                ApplicationStatus.COMPLETED -> 1
+                ApplicationStatus.REJECTED, ApplicationStatus.DECLINED, ApplicationStatus.NOT_INTERESTED -> 0
+            }
+        }
+
         fun getStatusCategory(status: ApplicationStatus): StatusCategory {
             return when (status) {
                 ApplicationStatus.APPLIED -> StatusCategory.PENDING
                 ApplicationStatus.SELECTED -> StatusCategory.ACTIVE
                 ApplicationStatus.ACCEPTED -> StatusCategory.ACTIVE
                 ApplicationStatus.WORK_IN_PROGRESS -> StatusCategory.ACTIVE
+                ApplicationStatus.COMPLETION_PENDING -> StatusCategory.ACTIVE  // 🚀 ADDED: Still active until verified
                 ApplicationStatus.COMPLETED -> StatusCategory.COMPLETED
                 ApplicationStatus.REJECTED, ApplicationStatus.DECLINED, ApplicationStatus.NOT_INTERESTED -> StatusCategory.REJECTED
             }
@@ -243,7 +246,6 @@ class ApplicationModels {
         data class Invalid(val reason: String) : StatusChangeValidation()
     }
 
-    // 🚀 NEW: Work session validation rules
     object WorkSessionRules {
 
         // Check if OTP is required for status change
@@ -270,7 +272,18 @@ class ApplicationModels {
         fun isWorkSessionActive(status: ApplicationStatus): Boolean {
             return status == ApplicationStatus.WORK_IN_PROGRESS
         }
+
+        // 🚀 NEW: Helper to check work session status
+        fun isWorkInProgress(workSessionStatus: String): Boolean {
+            return workSessionStatus == "WORK_IN_PROGRESS"
+        }
+
+        // 🚀 NEW: Get allowed work session statuses
+        fun getAllowedWorkSessionStatuses(): List<String> {
+            return listOf("OTP_GENERATED", "WORK_IN_PROGRESS", "COMPLETION_PENDING", "WORK_COMPLETED")
+        }
     }
+
 
     // 🚀 NEW: Employee action validation
     object EmployeeActionRules {

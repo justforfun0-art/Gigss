@@ -23,6 +23,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -543,44 +544,36 @@ class EmployerDashboardViewModel @Inject constructor(
 
 @HiltViewModel
 class EmployerApplicationsViewModel @Inject constructor(
-    private val applicationRepository: ApplicationRepository,
+    internal val applicationRepository: ApplicationRepository,
     private val jobRepository: JobRepository,
     private val authRepository: AuthRepository,
     private val supabaseClient: SupabaseClient
 ) : ViewModel() {
-    // 🚀 DEPRECATED: Keep for backward compatibility but don't use for auto-popup
-    private val _generatedOtp = MutableStateFlow<String?>(null)
-    val generatedOtp: StateFlow<String?> = _generatedOtp
 
-    private val _workSession = MutableStateFlow<WorkSession?>(null)
-    val workSession: StateFlow<WorkSession?> = _workSession
+    private val TAG = "EmployerAppsVM"
 
-    private val _otpError = MutableStateFlow<String?>(null)
-    val otpError: StateFlow<String?> = _otpError
+    // 🚀 Application lists
+    private val _recentApplications = MutableStateFlow<List<ApplicationWithJob>>(emptyList())
+    val recentApplications: StateFlow<List<ApplicationWithJob>> = _recentApplications
 
-    // Application count states
+    // 🚀 Loading states
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error
+
+    // 🚀 Application counts for dashboard
     private val _totalApplicationsCount = MutableStateFlow(0)
     val totalApplicationsCount: StateFlow<Int> = _totalApplicationsCount
 
     private val _selectedApplicationsCount = MutableStateFlow(0)
     val selectedApplicationsCount: StateFlow<Int> = _selectedApplicationsCount
 
-    private val _rejectedApplicationsCount = MutableStateFlow(0)
-    val rejectedApplicationsCount: StateFlow<Int> = _rejectedApplicationsCount
+    private val _completionPendingCount = MutableStateFlow(0)
+    val completionPendingCount: StateFlow<Int> = _completionPendingCount
 
-    private val _appliedApplicationsCount = MutableStateFlow(0)
-    val appliedApplicationsCount: StateFlow<Int> = _appliedApplicationsCount
-
-
-    private val TAG = "EmployerAppsVM"
-
-    private val _recentApplications = MutableStateFlow<List<ApplicationWithJob>>(emptyList())
-    val recentApplications: StateFlow<List<ApplicationWithJob>> = _recentApplications
-
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading
-
-    // 🚀 Individual OTP management per application with proper initialization
+    // 🚀 Individual OTP management per application
     private val _applicationOtps = MutableStateFlow<Map<String, String>>(emptyMap())
     val applicationOtps: StateFlow<Map<String, String>> = _applicationOtps
 
@@ -593,11 +586,11 @@ class EmployerApplicationsViewModel @Inject constructor(
     private val _applicationLoadingStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val applicationLoadingStates: StateFlow<Map<String, Boolean>> = _applicationLoadingStates
 
-    // 🚀 NEW: Track which applications should show OTP dialog
+    // 🚀 OTP Dialog states
     private val _applicationOtpDialogStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val applicationOtpDialogStates: StateFlow<Map<String, Boolean>> = _applicationOtpDialogStates
 
-    // 🚀 NEW: Completion OTP management
+    // 🚀 Completion OTP management
     private val _completionOtpDialogStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val completionOtpDialogStates: StateFlow<Map<String, Boolean>> = _completionOtpDialogStates
 
@@ -606,6 +599,71 @@ class EmployerApplicationsViewModel @Inject constructor(
 
     private val _completionLoadingStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val completionLoadingStates: StateFlow<Map<String, Boolean>> = _completionLoadingStates
+
+    private val _completionResults = MutableStateFlow<Map<String, String>>(emptyMap())
+    val completionResults: StateFlow<Map<String, String>> = _completionResults
+
+    // 🚀 DEPRECATED: Keep for backward compatibility but don't use for auto-popup
+    private val _generatedOtp = MutableStateFlow<String?>(null)
+    val generatedOtp: StateFlow<String?> = _generatedOtp
+
+    private val _workSession = MutableStateFlow<WorkSession?>(null)
+    val workSession: StateFlow<WorkSession?> = _workSession
+
+    private val _otpError = MutableStateFlow<String?>(null)
+    val otpError: StateFlow<String?> = _otpError
+
+
+    private val _rejectedApplicationsCount = MutableStateFlow(0)
+    val rejectedApplicationsCount: StateFlow<Int> = _rejectedApplicationsCount
+
+    private val _appliedApplicationsCount = MutableStateFlow(0)
+    val appliedApplicationsCount: StateFlow<Int> = _appliedApplicationsCount
+
+
+
+
+    /**
+     * 🚀 ENHANCED: Load applications with completion awareness
+     */
+    fun loadApplicationsWithCompletion(limit: Int = 20, statusFilter: String? = null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            try {
+                val userId = authRepository.getCurrentUserId() ?: return@launch
+                Log.d(TAG, "🔍 Loading applications with completion support, filter: $statusFilter")
+
+                val applications = applicationRepository.getApplicationsForEmployerDashboard(
+                    employerId = userId,
+                    limit = limit,
+                    statusFilter = statusFilter
+                )
+
+                _recentApplications.value = applications
+                Log.d(TAG, "✅ Loaded ${applications.size} applications")
+
+                // Load work sessions for all applications
+                loadWorkSessionsForAllApplications(applications)
+
+                // Update counts
+                updateApplicationCounts(applications)
+
+                // Debug log
+                val statusBreakdown = applications.groupBy { it.status }.mapValues { it.value.size }
+                Log.d(TAG, "📊 Application status breakdown: $statusBreakdown")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error loading applications: ${e.message}")
+                _error.value = "Failed to load applications: ${e.message}"
+                _recentApplications.value = emptyList()
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
 
 
     /**
@@ -674,30 +732,32 @@ class EmployerApplicationsViewModel @Inject constructor(
 
             try {
                 val userId = authRepository.getCurrentUserId() ?: return@launch
-                Log.d(TAG, "🔍 Loading SELECTED applications for home screen")
+                Log.d(TAG, "🔍 Loading SELECTED applications for dashboard")
 
-                // Use the new method to get only selected applications
                 val selectedApplications = applicationRepository.getSelectedApplicationsForEmployer(
                     employerId = userId,
                     limit = limit
                 )
 
                 _recentApplications.value = selectedApplications
-
                 Log.d(TAG, "✅ Loaded ${selectedApplications.size} SELECTED applications")
 
-                // Debug log
-                val statusBreakdown = selectedApplications.groupBy { it.status }.mapValues { it.value.size }
-                Log.d(TAG, "Selected applications breakdown: $statusBreakdown")
+                // Load work sessions
+                loadWorkSessionsForAllApplications(selectedApplications)
+
+                // Update counts
+                updateApplicationCounts(selectedApplications)
 
             } catch (e: Exception) {
-                Log.e(TAG, "Error loading selected applications: ${e.message}")
+                Log.e(TAG, "❌ Error loading selected applications: ${e.message}")
                 _recentApplications.value = emptyList()
             } finally {
                 _isLoading.value = false
             }
         }
     }
+
+
     /**
      * Update application status with proper validation for employers
      */
@@ -1092,9 +1152,8 @@ class EmployerApplicationsViewModel @Inject constructor(
      */
     fun acceptApplicationWithOtp(applicationId: String, shouldShowDialog: Boolean = false) {
         viewModelScope.launch {
-            Log.d(TAG, "🚀 Starting OTP generation for application: $applicationId (showDialog: $shouldShowDialog)")
+            Log.d(TAG, "🚀 Accepting application: $applicationId (showDialog: $shouldShowDialog)")
 
-            // Set loading state for this specific application
             setApplicationLoadingState(applicationId, true)
             clearApplicationError(applicationId)
 
@@ -1102,47 +1161,52 @@ class EmployerApplicationsViewModel @Inject constructor(
                 val result = withTimeoutOrNull(10000L) {
                     applicationRepository.acceptApplicationAndGenerateOtp(applicationId)
                 } ?: run {
-                    Log.e(TAG, "❌ OTP generation timed out for application: $applicationId")
+                    Log.e(TAG, "❌ OTP generation timed out")
                     setApplicationError(applicationId, "Request timed out. Please try again.")
                     return@launch
                 }
 
                 if (result.isSuccess) {
                     val otp = result.getOrNull() ?: ""
-                    Log.d(TAG, "✅ Generated OTP: $otp for application $applicationId")
+                    Log.d(TAG, "✅ Generated OTP: $otp")
 
-                    // 🚀 CRITICAL FIX: Store OTP immediately
+                    // Store OTP immediately
                     setApplicationOtp(applicationId, otp)
 
-                    // 🚀 NEW: Only set dialog state if explicitly requested
+                    // Set dialog state if requested
                     if (shouldShowDialog) {
                         setApplicationOtpDialogState(applicationId, true)
-                        Log.d(TAG, "🚀 Dialog state set for application: $applicationId")
                     }
 
-                    // Set legacy state for backward compatibility (but don't trigger dialog)
-                    _generatedOtp.value = otp
-
-                    // Load work session AFTER storing OTP
+                    // Load work session
                     loadWorkSessionForApplication(applicationId)
 
-                    // Refresh applications list
+                    // Refresh applications
                     refreshApplications()
 
                 } else {
                     val error = result.exceptionOrNull()?.message ?: "Failed to generate OTP"
-                    Log.e(TAG, "❌ Failed to generate OTP: $error")
+                    Log.e(TAG, "❌ OTP generation failed: $error")
                     setApplicationError(applicationId, error)
                 }
             } catch (e: Exception) {
                 val error = e.message ?: "Unknown error occurred"
-                Log.e(TAG, "❌ Exception generating OTP: $error", e)
+                Log.e(TAG, "❌ Exception generating OTP: $error")
                 setApplicationError(applicationId, error)
             } finally {
                 setApplicationLoadingState(applicationId, false)
             }
         }
     }
+
+    /**
+     * 🚀 NEW: Generate OTP silently (for status updates)
+     */
+    fun generateOtpSilently(applicationId: String) {
+        Log.d(TAG, "🚀 Generate OTP silently for: $applicationId")
+        acceptApplicationWithOtp(applicationId, shouldShowDialog = false)
+    }
+
 
     /**
      * 🚀 NEW: Generate OTP and show dialog (for button clicks)
@@ -1152,13 +1216,6 @@ class EmployerApplicationsViewModel @Inject constructor(
         acceptApplicationWithOtp(applicationId, shouldShowDialog = true)
     }
 
-    /**
-     * 🚀 NEW: Generate OTP without showing dialog (for status updates)
-     */
-    fun generateOtpSilently(applicationId: String) {
-        Log.d(TAG, "🚀 Generate OTP silently for: $applicationId")
-        acceptApplicationWithOtp(applicationId, shouldShowDialog = false)
-    }
 
     /**
      * 🚀 NEW: Show OTP dialog for existing OTP
@@ -1230,9 +1287,7 @@ class EmployerApplicationsViewModel @Inject constructor(
         }
     }
 
-    /**
-     * 🚀 FIXED: Update application status with better OTP handling
-     */
+
     suspend fun updateApplicationStatus(applicationId: String, newStatus: String): Boolean {
         return try {
             val validatedStatus = when (newStatus.uppercase()) {
@@ -1252,17 +1307,17 @@ class EmployerApplicationsViewModel @Inject constructor(
             var success = false
             applicationRepository.updateApplicationStatus(applicationId, validatedStatus)
                 .catch { e ->
-                    Log.e(TAG, "❌ Failed to update application status: ${e.message}")
+                    Log.e(TAG, "❌ Failed to update status: ${e.message}")
                 }
                 .collect { result ->
                     success = result.isSuccess
                 }
 
             if (success) {
-                Log.d(TAG, "✅ Successfully updated application status to $validatedStatus")
+                Log.d(TAG, "✅ Successfully updated status to $validatedStatus")
                 refreshApplications()
 
-                // 🚀 FIXED: If status was changed to SELECTED, generate OTP silently (no auto-dialog)
+                // If status changed to SELECTED, generate OTP silently
                 if (validatedStatus == "SELECTED") {
                     generateOtpSilently(applicationId)
                 }
@@ -1274,6 +1329,8 @@ class EmployerApplicationsViewModel @Inject constructor(
             false
         }
     }
+
+
 
     /**
      * Load applications for a specific job
@@ -1409,27 +1466,31 @@ class EmployerApplicationsViewModel @Inject constructor(
         Log.d(TAG, "🚀 Set OTP dialog state for $applicationId: $shouldShow")
     }
 
-        /**
-     * 🚀 NEW: Load work session for specific application
-     */
-    private suspend fun loadWorkSessionForApplication(applicationId: String) {
+    private suspend fun loadWorkSessionsForAllApplications(applications: List<ApplicationWithJob>) {
         try {
-            val result = applicationRepository.getWorkSessionForApplication(applicationId)
-
-            if (result.isSuccess) {
-                val workSession = result.getOrNull()
-                if (workSession != null) {
-                    setApplicationWorkSession(applicationId, workSession)
-
-                    // If session has OTP, store it
-                    if (workSession.status == "OTP_GENERATED" && workSession.otp.isNotBlank()) {
-                        setApplicationOtp(applicationId, workSession.otp)
+            supervisorScope {
+                applications.forEach { application ->
+                    launch {
+                        if (application.status in listOf(
+                                ApplicationStatus.SELECTED,
+                                ApplicationStatus.WORK_IN_PROGRESS,
+                                ApplicationStatus.COMPLETION_PENDING,
+                                ApplicationStatus.COMPLETED
+                            )) {
+                            getWorkSessionWithCompletion(application.id)
+                        }
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error loading work session for application $applicationId: ${e.message}")
+            Log.e(TAG, "Error loading work sessions: ${e.message}")
         }
+    }
+
+    private fun updateApplicationCounts(applications: List<ApplicationWithJob>) {
+        _totalApplicationsCount.value = applications.size
+        _selectedApplicationsCount.value = applications.count { it.status == ApplicationStatus.SELECTED }
+        _completionPendingCount.value = applications.count { it.status == ApplicationStatus.COMPLETION_PENDING }
     }
 
     /**
@@ -1500,24 +1561,49 @@ class EmployerApplicationsViewModel @Inject constructor(
     }
 
     /**
-     * Refresh applications after changes
+     * Clear all data
      */
-    private fun refreshApplications() {
+    fun clearAllData() {
+        _applicationOtps.value = emptyMap()
+        _applicationWorkSessions.value = emptyMap()
+        _applicationOtpErrors.value = emptyMap()
+        _applicationLoadingStates.value = emptyMap()
+        _applicationOtpDialogStates.value = emptyMap()
+        _completionOtpDialogStates.value = emptyMap()
+        _completionOtpErrors.value = emptyMap()
+        _completionLoadingStates.value = emptyMap()
+        _completionResults.value = emptyMap()
+        _error.value = null
+    }
+
+
+    private fun setCompletionResult(applicationId: String, result: String) {
+        val currentMap = _completionResults.value.toMutableMap()
+        currentMap[applicationId] = result
+        _completionResults.value = currentMap
+    }
+
+    /**
+     * Refresh applications
+     */
+    fun refreshApplications() {
         viewModelScope.launch {
             try {
                 val currentSize = _recentApplications.value.size
-                loadRecentApplications(currentSize.coerceAtLeast(5))
+                loadApplicationsWithCompletion(currentSize.coerceAtLeast(10))
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Error refreshing applications: ${e.message}")
             }
         }
     }
 
+    /**
+     * 🚀 ENHANCED: Verify work completion OTP and finalize work
+     */
     fun verifyCompletionOtpAndFinalize(applicationId: String, enteredOtp: String) {
         viewModelScope.launch {
-            Log.d(TAG, "🚀 Starting completion OTP verification for application: $applicationId")
+            Log.d(TAG, "🚀 Verifying completion OTP for: $applicationId")
 
-            // Set loading state for this specific application
             setCompletionLoadingState(applicationId, true)
             clearCompletionError(applicationId)
 
@@ -1532,20 +1618,26 @@ class EmployerApplicationsViewModel @Inject constructor(
                     Log.d(TAG, "⏰ Duration: ${completionResult.workDurationMinutes} minutes")
                     Log.d(TAG, "💰 Total Wages: ₹${completionResult.totalWages}")
 
+                    // Store completion result
+                    setCompletionResult(
+                        applicationId,
+                        "Work completed! Duration: ${completionResult.workDurationMinutes}min, Wages: ₹${completionResult.totalWages}"
+                    )
+
                     // Hide completion dialog
                     hideCompletionOtpDialog(applicationId)
 
-                    // Refresh applications to show updated status
+                    // Refresh applications
                     refreshApplications()
 
                 } else {
                     val error = result.exceptionOrNull()?.message ?: "Failed to verify completion OTP"
-                    Log.e(TAG, "❌ Completion OTP verification failed: $error")
+                    Log.e(TAG, "❌ Completion verification failed: $error")
                     setCompletionError(applicationId, error)
                 }
             } catch (e: Exception) {
                 val error = e.message ?: "Unknown error occurred"
-                Log.e(TAG, "❌ Exception during completion verification: $error", e)
+                Log.e(TAG, "❌ Exception during completion verification: $error")
                 setCompletionError(applicationId, error)
             } finally {
                 setCompletionLoadingState(applicationId, false)
@@ -1553,8 +1645,26 @@ class EmployerApplicationsViewModel @Inject constructor(
         }
     }
 
+    private suspend fun loadWorkSessionForApplication(applicationId: String) {
+        try {
+            val result = applicationRepository.getWorkSessionForApplication(applicationId)
+            if (result.isSuccess) {
+                val workSession = result.getOrNull()
+                if (workSession != null) {
+                    setApplicationWorkSession(applicationId, workSession)
+                    if (workSession.status == "OTP_GENERATED" && workSession.otp.isNotBlank()) {
+                        setApplicationOtp(applicationId, workSession.otp)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading work session for $applicationId: ${e.message}")
+        }
+    }
+
+
     /**
-     * 🚀 NEW: Show completion OTP dialog for employer
+     * 🚀 NEW: Show completion OTP dialog
      */
     fun showCompletionOtpDialog(applicationId: String) {
         Log.d(TAG, "🚀 Show completion OTP dialog for: $applicationId")
@@ -1576,6 +1686,24 @@ class EmployerApplicationsViewModel @Inject constructor(
     fun shouldShowCompletionOtpDialog(applicationId: String): Boolean {
         return _completionOtpDialogStates.value[applicationId] ?: false
     }
+
+    /**
+     * 🚀 NEW: Check if application has completion pending
+     */
+    fun hasCompletionPending(application: ApplicationWithJob): Boolean {
+        val appStatus = application.status == ApplicationStatus.COMPLETION_PENDING
+        val sessionStatus = application.workSession?.status == "COMPLETION_PENDING"
+        return appStatus || sessionStatus
+    }
+
+    /**
+     * 🚀 NEW: Get completion OTP from work session
+     */
+    fun getCompletionOtpForApplication(applicationId: String): String? {
+        val workSession = _applicationWorkSessions.value[applicationId]
+        return workSession?.completionOtp
+    }
+
 
     /**
      * 🚀 NEW: Get completion error for specific application
@@ -1606,20 +1734,34 @@ class EmployerApplicationsViewModel @Inject constructor(
                     if (workSession != null) {
                         setApplicationWorkSession(applicationId, workSession)
 
-                        if (workSession.status == "COMPLETION_PENDING") {
-                            Log.d(TAG, "✅ Found completion pending session - employee has initiated completion")
-                            // Optionally auto-show completion dialog for employer
-                            // showCompletionOtpDialog(applicationId)
+                        when (workSession.status) {
+                            "COMPLETION_PENDING" -> {
+                                Log.d(TAG, "✅ Found completion pending session")
+                                // Could auto-show completion dialog if needed
+                            }
+                            "WORK_COMPLETED" -> {
+                                Log.d(TAG, "✅ Work already completed")
+                            }
+                            "OTP_GENERATED" -> {
+                                if (workSession.otp.isNotBlank()) {
+                                    setApplicationOtp(applicationId, workSession.otp)
+                                }
+                            }
+                            "WORK_IN_PROGRESS" -> {
+                                Log.d(TAG, "✅ Work in progress")
+                            }
                         }
                     }
                 } else {
                     Log.w(TAG, "⚠️ Failed to load work session: ${result.exceptionOrNull()?.message}")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Error loading work session with completion: ${e.message}")
+                Log.e(TAG, "❌ Error loading work session: ${e.message}")
             }
         }
     }
+
+
 
     /**
      * Helper methods for completion state management
@@ -1697,6 +1839,33 @@ class EmployerApplicationsViewModel @Inject constructor(
             }
         }
     }
+
+    suspend fun verifyWorkCompletionOtp(applicationId: String, otp: String): Result<String> {
+        return try {
+            Log.d(TAG, "🚀 Verifying work completion OTP for application: $applicationId")
+
+            // Call the repository method
+            val result = applicationRepository.verifyWorkCompletionOtp(applicationId, otp)
+
+            if (result.isSuccess) {
+                Log.d(TAG, "✅ Work completion OTP verified successfully")
+
+                // Refresh applications to show updated status
+                    delay(500)
+                    loadRecentApplications(50)
+
+            } else {
+                Log.e(TAG, "❌ Work completion OTP verification failed: ${result.exceptionOrNull()?.message}")
+            }
+
+            result
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception during work completion OTP verification: ${e.message}", e)
+            Result.failure(Exception("Failed to verify completion: ${e.message}"))
+        }
+    }
+
 
     /**
      * Load work sessions for multiple applications including completion status

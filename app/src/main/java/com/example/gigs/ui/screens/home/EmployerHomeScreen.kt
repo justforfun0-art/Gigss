@@ -48,6 +48,11 @@ import com.example.gigs.viewmodel.JobViewModel
 import com.example.gigs.viewmodel.JobsFilter
 import com.example.gigs.viewmodel.ProfileViewModel
 import androidx.compose.ui.unit.sp
+import com.example.gigs.data.model.getDisplayText
+import com.example.gigs.data.repository.ApplicationRepository
+import com.example.gigs.ui.components.EmployerCompletionOtpDialog
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -245,8 +250,13 @@ fun EmployerHomeTab(
     // Get selected candidates
     val recentApplications by applicationsViewModel.recentApplications.collectAsState()
     val selectedCandidates = remember(recentApplications) {
-        recentApplications.filter { it.status == ApplicationStatus.SELECTED }
+        recentApplications.filter {
+            it.status == ApplicationStatus.SELECTED || it.status == ApplicationStatus.WORK_IN_PROGRESS
+        }.sortedWith(
+            compareByDescending<ApplicationWithJob> { it.status == ApplicationStatus.WORK_IN_PROGRESS }
+        )
     }
+
 
     // Handle navigation events from dashboard ViewModel
     LaunchedEffect(Unit) {
@@ -897,7 +907,11 @@ fun SelectedCandidatesTab(
 
     // Filter only selected candidates
     val selectedCandidates = remember(recentApplications) {
-        recentApplications.filter { it.status == ApplicationStatus.SELECTED }
+        recentApplications.filter {
+            it.status == ApplicationStatus.SELECTED || it.status == ApplicationStatus.WORK_IN_PROGRESS
+        }.sortedWith(
+            compareByDescending<ApplicationWithJob> { it.status == ApplicationStatus.WORK_IN_PROGRESS }
+        )
     }
     LaunchedEffect(Unit) {
         applicationsViewModel.loadRecentApplications(100) // Load more for this dedicated view
@@ -997,6 +1011,10 @@ fun SelectedCandidatesTab(
     }
 }
 
+// EmployerHomeScreen.kt - UPDATED to handle work completion verification
+
+// Add this to your existing SelectedCandidateDetailedItem composable
+
 @Composable
 fun SelectedCandidateDetailedItem(
     application: ApplicationWithJob,
@@ -1006,11 +1024,20 @@ fun SelectedCandidateDetailedItem(
     // 🚀 CRITICAL FIX: Use local state for dialog control
     var showOtpDialog by remember { mutableStateOf(false) }
 
+    // 🚀 NEW: Completion verification state
+    var showCompletionVerificationDialog by remember { mutableStateOf(false) }
+    var completionOtpInput by remember { mutableStateOf("") }
+    var isVerifyingCompletion by remember { mutableStateOf(false) }
+    var completionVerificationError by remember { mutableStateOf<String?>(null) }
+
     // 🚀 FIX: Use application-specific OTP data
     val applicationOtps by applicationsViewModel.applicationOtps.collectAsState()
     val applicationWorkSessions by applicationsViewModel.applicationWorkSessions.collectAsState()
     val applicationLoadingStates by applicationsViewModel.applicationLoadingStates.collectAsState()
     val applicationErrors by applicationsViewModel.applicationOtpErrors.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
+    //val applicationRepository: ApplicationRepository = hiltViewModel()
+
 
     // Get data for this specific application
     val currentOtp = remember(applicationOtps, application.id) {
@@ -1028,7 +1055,7 @@ fun SelectedCandidateDetailedItem(
 
     // Only load work session once per application
     LaunchedEffect(application.id) {
-        if (currentWorkSession == null && application.status == ApplicationStatus.SELECTED) {
+        if (currentWorkSession == null) {
             applicationsViewModel.getWorkSessionForApplication(application.id)
         }
     }
@@ -1085,13 +1112,33 @@ fun SelectedCandidateDetailedItem(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f))
+                        .background(
+                            when (application.status) {
+                                ApplicationStatus.SELECTED -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f)
+                                ApplicationStatus.WORK_IN_PROGRESS -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.1f)
+                                ApplicationStatus.COMPLETION_PENDING -> MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                                ApplicationStatus.COMPLETED -> MaterialTheme.colorScheme.primaryContainer
+                                else -> MaterialTheme.colorScheme.surfaceVariant
+                            }
+                        )
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = "SELECTED",
+                        text = when (application.status) {
+                            ApplicationStatus.SELECTED -> "SELECTED"
+                            ApplicationStatus.WORK_IN_PROGRESS -> "WORKING"
+                            ApplicationStatus.COMPLETION_PENDING -> "VERIFY COMPLETION"
+                            ApplicationStatus.COMPLETED -> "COMPLETED"
+                            else -> application.status.getDisplayText().uppercase()
+                        },
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.secondary,
+                        color = when (application.status) {
+                            ApplicationStatus.SELECTED -> MaterialTheme.colorScheme.secondary
+                            ApplicationStatus.WORK_IN_PROGRESS -> MaterialTheme.colorScheme.tertiary
+                            ApplicationStatus.COMPLETION_PENDING -> MaterialTheme.colorScheme.primary
+                            ApplicationStatus.COMPLETED -> MaterialTheme.colorScheme.onPrimaryContainer
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -1122,78 +1169,347 @@ fun SelectedCandidateDetailedItem(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Action buttons row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                TextButton(
-                    onClick = onViewProfile,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("View Profile")
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                // 🚀 FIXED: OTP Generation Button with proper dialog control
-                if (currentOtp != null) {
-                    Button(
-                        onClick = {
-                            showOtpDialog = true // 🚀 Use local state
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary
-                        )
+            // 🚀 Status-specific action buttons and information
+            when (application.status) {
+                ApplicationStatus.SELECTED -> {
+                    // Show OTP generation for selected candidates
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Security,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("View OTP")
-                    }
-                } else {
-                    Button(
-                        onClick = {
-                            // 🚀 FIXED: Generate OTP without auto-showing dialog
-                            applicationsViewModel.generateOtpSilently(application.id)
-                        },
-                        enabled = !isCurrentlyLoading,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary
-                        )
-                    ) {
-                        if (isCurrentlyLoading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onSecondary
-                            )
-                        } else {
+                        TextButton(
+                            onClick = onViewProfile,
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Icon(
-                                imageVector = Icons.Default.Security,
+                                imageVector = Icons.Default.Person,
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Generate OTP")
+                            Text("View Profile")
                         }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        if (currentOtp != null) {
+                            Button(
+                                onClick = { showOtpDialog = true },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondary
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Security,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("View OTP")
+                            }
+                        } else {
+                            Button(
+                                onClick = {
+                                    applicationsViewModel.generateOtpSilently(application.id)
+                                },
+                                enabled = !isCurrentlyLoading,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondary
+                                )
+                            ) {
+                                if (isCurrentlyLoading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onSecondary
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Security,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Generate OTP")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ApplicationStatus.WORK_IN_PROGRESS -> {
+                    // Show work progress information
+                    currentWorkSession?.let { session ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp)
+                            ) {
+                                Text(
+                                    text = "Work In Progress",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Started:",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = session.workStartTime?.let {
+                                            DateUtils.formatDate(it)
+                                        } ?: "Unknown",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+
+                                Text(
+                                    text = "Employee is currently working on this job",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                ApplicationStatus.COMPLETION_PENDING -> {
+                    // 🚀 NEW: Show completion verification UI
+                    Column {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.HourglassTop,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Work Completion Pending Verification",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "Employee has completed work and generated a completion code. Verify the work quality and enter the completion code to finalize.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                // Show work duration if available
+                                currentWorkSession?.let { session ->
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "Work Duration:",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = session.formattedWorkDuration,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+
+                                    // Show estimated wages
+                                    session.calculatedWages?.let { wages ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                text = "Estimated Wages:",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            Text(
+                                                text = "₹${String.format("%.2f", wages)}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Verify completion button
+                        Button(
+                            onClick = {
+                                showCompletionVerificationDialog = true
+                                completionOtpInput = ""
+                                completionVerificationError = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !isVerifyingCompletion,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            if (isVerifyingCompletion) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Verifying...")
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.VerifiedUser,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Verify Work Completion")
+                            }
+                        }
+                    }
+                }
+
+                ApplicationStatus.COMPLETED -> {
+                    // 🚀 NEW: Show completed work summary
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Work Completed Successfully",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Show completion details
+                            currentWorkSession?.let { session ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Total Duration:",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = session.formattedWorkDuration,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+
+                                session.totalWagesCalculated?.let { wages ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "Total Wages:",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Text(
+                                            text = "₹$wages",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+
+                                session.workEndTime?.let { endTime ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "Completed:",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Text(
+                                            text = DateUtils.formatDate(endTime),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                else -> {
+                    // Default view profile button
+                    Button(
+                        onClick = onViewProfile,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("View Profile")
                     }
                 }
             }
 
-            // 🚀 FIX: Show inline OTP only for this specific application
-            if (currentOtp != null && currentWorkSession != null) {
+            // 🚀 FIX: Show inline OTP only for selected status
+            if (currentOtp != null && application.status == ApplicationStatus.SELECTED) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Card(
@@ -1267,6 +1583,34 @@ fun SelectedCandidateDetailedItem(
                     color = MaterialTheme.colorScheme.error
                 )
             }
+
+            // Show completion verification error
+            completionVerificationError?.let { error ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Error,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -1278,12 +1622,68 @@ fun SelectedCandidateDetailedItem(
             jobTitle = application.job.title,
             expiryTime = currentWorkSession?.otpExpiry,
             onDismiss = {
-                showOtpDialog = false // 🚀 Use local state
+                showOtpDialog = false
             },
             onRegenerateOtp = {
-                showOtpDialog = false // 🚀 Use local state
+                showOtpDialog = false
                 applicationsViewModel.generateOtpSilently(application.id)
             }
+        )
+    }
+
+    // 🚀 NEW: Work Completion Verification Dialog
+    if (showCompletionVerificationDialog) {
+        EmployerCompletionOtpDialog(
+            employeeName = "Applicant ${application.employeeId.takeLast(5)}",
+            jobTitle = application.job.title,
+            workDuration = currentWorkSession?.formattedWorkDuration ?: "Unknown",
+            estimatedWages = currentWorkSession?.calculatedWages?.let {
+                "₹${String.format("%.2f", it)}"
+            } ?: "To be calculated",
+            onDismiss = {
+                showCompletionVerificationDialog = false
+                completionOtpInput = ""
+                completionVerificationError = null
+            },
+            onVerifyOtp = { otp ->
+                completionOtpInput = otp
+                isVerifyingCompletion = true
+                completionVerificationError = null
+
+                // Call the verification API
+                coroutineScope.launch {
+                    try {
+                        val result = applicationsViewModel.verifyWorkCompletionOtp(
+                            application.id,
+                            otp
+                        )
+
+                        if (result.isSuccess) {
+                            // Success - close dialog and refresh data
+                            showCompletionVerificationDialog = false
+
+                            // Refresh applications to show updated status
+                            applicationsViewModel.loadRecentApplications(100)
+
+                            // Show success message
+                            // You might want to show a snackbar here
+
+                            Log.d("EmployerHomeScreen", "✅ Work completion verified successfully")
+                        } else {
+                            completionVerificationError = result.exceptionOrNull()?.message
+                                ?: "Failed to verify completion"
+                            Log.e("EmployerHomeScreen", "❌ Completion verification failed: $completionVerificationError")
+                        }
+                    } catch (e: Exception) {
+                        completionVerificationError = "Error: ${e.message}"
+                        Log.e("EmployerHomeScreen", "❌ Exception during completion verification: ${e.message}")
+                    } finally {
+                        isVerifyingCompletion = false
+                    }
+                }
+            },
+            isLoading = isVerifyingCompletion,
+            errorMessage = completionVerificationError
         )
     }
 }
